@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from main import procesar_pregunta
 from tools import (
@@ -20,8 +21,14 @@ app.add_middleware(
 )
 
 
+class MensajeHistorial(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=2000)
+
+
 class ConsultaChat(BaseModel):
     pregunta: str = Field(min_length=1, max_length=1000)
+    historial: list[MensajeHistorial] = Field(default_factory=list, max_length=10)
 
 
 class RespuestaChat(BaseModel):
@@ -38,7 +45,10 @@ class ResumenOperativo(BaseModel):
 
 @app.post("/api/chat", response_model=RespuestaChat)
 def consultar_chat(consulta: ConsultaChat):
-    resultado = procesar_pregunta(consulta.pregunta)
+    resultado = procesar_pregunta(
+        consulta.pregunta,
+        [mensaje.model_dump() for mensaje in consulta.historial],
+    )
     return {
         "respuesta": resultado["respuesta"],
         "herramientas_usadas": resultado["herramientas_usadas"],

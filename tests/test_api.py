@@ -9,14 +9,20 @@ import api
 
 
 def test_consultar_chat_devuelve_respuesta_y_herramientas(monkeypatch):
-    monkeypatch.setattr(
-        api,
-        "procesar_pregunta",
-        lambda pregunta: {
+    historial_recibido = []
+
+    def procesar(pregunta, historial):
+        historial_recibido.extend(historial)
+        return {
             "respuesta": f"Respuesta para: {pregunta}",
             "herramientas_usadas": ["consultar_stock"],
             "resultados": [],
-        },
+        }
+
+    monkeypatch.setattr(
+        api,
+        "procesar_pregunta",
+        procesar,
     )
     cliente = TestClient(api.app)
 
@@ -27,6 +33,28 @@ def test_consultar_chat_devuelve_respuesta_y_herramientas(monkeypatch):
         "respuesta": "Respuesta para: Stock de MAT-003",
         "herramientas_usadas": ["consultar_stock"],
     }
+    assert historial_recibido == []
+
+
+def test_consultar_chat_envia_el_historial_al_agente(monkeypatch):
+    historial_recibido = []
+
+    def procesar(_pregunta, historial):
+        historial_recibido.extend(historial)
+        return {"respuesta": "Correcto.", "herramientas_usadas": [], "resultados": []}
+
+    monkeypatch.setattr(api, "procesar_pregunta", procesar)
+    cliente = TestClient(api.app)
+
+    respuesta = cliente.post("/api/chat", json={
+        "pregunta": "Y cual es su prioridad?",
+        "historial": [{"role": "user", "content": "Consulta la orden 45001234"}],
+    })
+
+    assert respuesta.status_code == 200
+    assert historial_recibido == [
+        {"role": "user", "content": "Consulta la orden 45001234"}
+    ]
 
 
 def test_consultar_chat_rechaza_pregunta_vacia():

@@ -64,7 +64,16 @@ function App() {
       const respuesta = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pregunta: consulta }),
+        body: JSON.stringify({
+          pregunta: consulta,
+          historial: mensajes
+            .filter((mensaje) => mensaje.tipo === "usuario" || mensaje.tipo === "asistente")
+            .slice(-10)
+            .map((mensaje) => ({
+              role: mensaje.tipo === "usuario" ? "user" : "assistant",
+              content: mensaje.contenido,
+            })),
+        }),
       });
       if (!respuesta.ok) throw new Error("La API no pudo procesar la consulta.");
 

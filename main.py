@@ -194,8 +194,11 @@ def ejecutar_chat(**argumentos):
         return None
 
 
-def procesar_pregunta(pregunta):
-    messages = [{"role": "system", "content": SISTEMA}, {"role": "user", "content": pregunta}]
+def procesar_pregunta(pregunta, historial=None):
+    mensajes_historial = historial or []
+    messages = [{"role": "system", "content": SISTEMA}]
+    messages.extend(mensajes_historial[-10:])
+    messages.append({"role": "user", "content": pregunta})
     tipo_consulta = routing.detectar_consulta_compuesta(pregunta)
 
     if tipo_consulta:

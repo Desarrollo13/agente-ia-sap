@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -10,23 +10,53 @@ const consultasRapidas = [
   "Que ordenes esperando material tienen mayor prioridad?",
 ];
 
+const MENSAJE_INICIAL = {
+  tipo: "asistente",
+  contenido: "Listo para consultar ordenes, materiales, stock y prioridades de mantenimiento.",
+  herramientas: [],
+  hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+};
+
+function cargarHistorial() {
+  try {
+    return JSON.parse(localStorage.getItem("historial-sap")) ?? [MENSAJE_INICIAL];
+  } catch {
+    return [MENSAJE_INICIAL];
+  }
+}
+
 function App() {
   const [pregunta, setPregunta] = useState("");
   const [cargando, setCargando] = useState(false);
-  const [mensajes, setMensajes] = useState([
-    {
-      tipo: "asistente",
-      contenido: "Listo para consultar ordenes, materiales, stock y prioridades de mantenimiento.",
-      herramientas: [],
-    },
-  ]);
+  const [mensajes, setMensajes] = useState(cargarHistorial);
+  const [resumen, setResumen] = useState(null);
+  const [errorResumen, setErrorResumen] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("historial-sap", JSON.stringify(mensajes));
+  }, [mensajes]);
+
+  async function cargarResumen() {
+    try {
+      const respuesta = await fetch(`${API_URL}/api/resumen`);
+      if (!respuesta.ok) throw new Error();
+      setResumen(await respuesta.json());
+      setErrorResumen(false);
+    } catch {
+      setErrorResumen(true);
+    }
+  }
+
+  useEffect(() => {
+    cargarResumen();
+  }, []);
 
   async function enviarPregunta(evento) {
     evento?.preventDefault();
     const consulta = pregunta.trim();
     if (!consulta || cargando) return;
 
-    setMensajes((actuales) => [...actuales, { tipo: "usuario", contenido: consulta }]);
+    setMensajes((actuales) => [...actuales, { tipo: "usuario", contenido: consulta, hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }]);
     setPregunta("");
     setCargando(true);
 
@@ -45,6 +75,7 @@ function App() {
           tipo: "asistente",
           contenido: datos.respuesta,
           herramientas: datos.herramientas_usadas,
+          hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
     } catch (error) {
@@ -57,6 +88,7 @@ function App() {
           tipo: "error",
           contenido: `${mensaje} Verifica que FastAPI este ejecutandose en ${API_URL}.`,
           herramientas: [],
+          hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
       ]);
     } finally {
@@ -77,11 +109,19 @@ function App() {
       </aside>
 
       <section className="chat">
-        <header><div><p className="etiqueta">ASISTENTE</p><h2>Centro de consultas</h2></div><span className="fecha">Mantenimiento SAP</span></header>
+        <header><div><p className="etiqueta">ASISTENTE</p><h2>Centro de consultas</h2></div><button className="nueva-conversacion" onClick={() => setMensajes([{ ...MENSAJE_INICIAL, hora: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }])}>Nueva conversacion</button></header>
+        <section className="indicadores">
+          <div><span>Total ordenes</span><strong>{resumen?.total_ordenes ?? "-"}</strong></div>
+          <div><span>En espera</span><strong>{resumen?.en_espera_material ?? "-"}</strong></div>
+          <div><span>Sin stock</span><strong>{resumen?.materiales_sin_stock ?? "-"}</strong></div>
+          <div><span>Prioridad alta</span><strong>{resumen?.orden_mayor_prioridad ?? "-"}</strong></div>
+          <button className="actualizar" onClick={cargarResumen}>Actualizar</button>
+          {errorResumen && <p>No se pudo actualizar el resumen.</p>}
+        </section>
         <div className="mensajes">
           {mensajes.map((mensaje, indice) => (
             <article className={`mensaje ${mensaje.tipo}`} key={indice}>
-              <span className="rol">{mensaje.tipo === "usuario" ? "Operador" : "Agente"}</span>
+              <span className="rol">{mensaje.tipo === "usuario" ? "Operador" : "Agente"} <time>{mensaje.hora}</time></span>
               <p>{mensaje.contenido}</p>
               {mensaje.herramientas?.length > 0 && <div className="herramientas">{mensaje.herramientas.map((herramienta) => <span key={herramienta}>{herramienta}</span>)}</div>}
             </article>

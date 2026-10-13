@@ -50,3 +50,27 @@ def test_api_permite_el_origen_del_frontend():
 
     assert respuesta.status_code == 200
     assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_consultar_resumen_devuelve_indicadores(monkeypatch):
+    monkeypatch.setattr(api, "analizar_ordenes", lambda: {
+        "total_ordenes": 4,
+        "en_espera_material": 2,
+    })
+    monkeypatch.setattr(api, "buscar_materiales_sin_stock", lambda: [{"material": "MAT-003"}])
+    monkeypatch.setattr(
+        api,
+        "analizar_prioridad_ordenes_esperando_material",
+        lambda _tipo: {"numero_orden": "45001234"},
+    )
+    cliente = TestClient(api.app)
+
+    respuesta = cliente.get("/api/resumen")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {
+        "total_ordenes": 4,
+        "en_espera_material": 2,
+        "materiales_sin_stock": 1,
+        "orden_mayor_prioridad": "45001234",
+    }

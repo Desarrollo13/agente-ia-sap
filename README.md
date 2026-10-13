@@ -12,7 +12,7 @@ interpretar preguntas y MySQL como fuente de datos.
 
 ## Configuracion
 
-Crear un archivo `.env` en la raiz del proyecto:
+Copiar `.env.example` como `.env` y completar las credenciales de MySQL:
 
 ```env
 DB_HOST=localhost
@@ -25,7 +25,7 @@ Instalar las dependencias en un entorno virtual:
 
 ```powershell
 python -m venv venv
-.\venv\Scripts\pip.exe install ollama mysql-connector-python python-dotenv pytest
+.\venv\Scripts\pip.exe install -r requirements.txt
 ```
 
 Descargar el modelo de Ollama si fuera necesario:

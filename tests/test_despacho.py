@@ -115,3 +115,12 @@ def test_ejecutar_herramienta_informa_error_de_base_de_datos(monkeypatch):
     )
 
     assert resultado == "No se pudo consultar la base de datos."
+
+
+def test_ejecutar_chat_devuelve_none_si_ollama_falla(monkeypatch):
+    def fallar(**_argumentos):
+        raise ConnectionError
+
+    monkeypatch.setattr(main, "chat", fallar)
+
+    assert main.ejecutar_chat(model="modelo-prueba", messages=[]) is None

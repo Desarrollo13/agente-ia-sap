@@ -77,17 +77,55 @@ def ejecutar_consulta_compuesta(tipo_consulta):
                 "buscar_ordenes_con_material_sin_stock",
                 buscar_ordenes_con_material_sin_stock(),
             ),
-        ], """Indica el total de ordenes y todas las ordenes que requieren un material con stock cero. Responde exclusivamente con los resultados recibidos."""
+        ]
 
     tipo_prioridad = "menor" if tipo_consulta.endswith("_menor") else "mayor"
-    descripcion_prioridad = "menor" if tipo_prioridad == "menor" else "mayor"
     return [
         ("analizar_ordenes_esperando_material", analizar_ordenes_esperando_material()),
         (
             "analizar_prioridad_ordenes_esperando_material",
             analizar_prioridad_ordenes_esperando_material(tipo_prioridad),
         ),
-    ], f"""Enumera todas las ordenes que esperan material y luego identifica la de {descripcion_prioridad} prioridad. Respeta exactamente materiales, cantidades, stock y unidades. Responde exclusivamente con los resultados recibidos."""
+    ]
+
+
+def formatear_orden_esperando_material(orden):
+    return (
+        f"- Orden {orden['numero_orden']} ({orden['prioridad']}): "
+        f"{orden['descripcion_orden']}. Requiere {orden['cantidad_requerida']} "
+        f"{orden['unidad']} de {orden['material']} "
+        f"({orden['descripcion_material']}); stock actual: {orden['stock']} "
+        f"{orden['unidad']}."
+    )
+
+
+def redactar_consulta_compuesta(tipo_consulta, resultados):
+    resultados_por_nombre = dict(resultados)
+
+    if tipo_consulta == "total_sin_stock":
+        total = resultados_por_nombre["analizar_ordenes"]["total_ordenes"]
+        ordenes = resultados_por_nombre["buscar_ordenes_con_material_sin_stock"]
+        respuesta = f"Hay {total} ordenes en total."
+        if not ordenes:
+            return respuesta + "\n\nNo hay ordenes con materiales sin stock."
+        detalle = "\n".join(formatear_orden_esperando_material(orden) for orden in ordenes)
+        return respuesta + "\n\nOrdenes con materiales sin stock:\n" + detalle
+
+    ordenes = resultados_por_nombre["analizar_ordenes_esperando_material"]
+    orden_prioritaria = resultados_por_nombre[
+        "analizar_prioridad_ordenes_esperando_material"
+    ]
+    if not ordenes:
+        return "No hay ordenes esperando material."
+
+    tipo_prioridad = "menor" if tipo_consulta.endswith("_menor") else "mayor"
+    detalle = "\n".join(formatear_orden_esperando_material(orden) for orden in ordenes)
+    return (
+        "Ordenes esperando material:\n"
+        + detalle
+        + f"\n\nLa orden de {tipo_prioridad} prioridad es "
+        + f"{orden_prioritaria['numero_orden']} ({orden_prioritaria['prioridad']})."
+    )
 
 
 def main():
@@ -96,15 +134,12 @@ def main():
     tipo_consulta = routing.detectar_consulta_compuesta(pregunta)
 
     if tipo_consulta:
-        resultados, instruccion = ejecutar_consulta_compuesta(tipo_consulta)
-        messages.append({"role": "system", "content": instruccion})
+        resultados = ejecutar_consulta_compuesta(tipo_consulta)
         for nombre, resultado in resultados:
             print(f"Tool utilizada: {nombre}")
             print(f"Resultado de la Tool: {resultado}")
-            messages.append({"role": "tool", "tool_name": nombre, "content": str(resultado)})
-        respuesta_final = chat(model=MODELO, messages=messages)
         print("\nRespuesta final:")
-        print(respuesta_final.message.content)
+        print(redactar_consulta_compuesta(tipo_consulta, resultados))
         return
 
     respuesta = chat(model=MODELO, messages=messages, tools=TOOLS)

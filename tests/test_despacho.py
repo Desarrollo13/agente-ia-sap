@@ -31,10 +31,49 @@ def test_consulta_compuesta_menor_prioridad_usa_el_tipo_correcto(monkeypatch):
         lambda tipo: tipos_recibidos.append(tipo) or {},
     )
 
-    resultados, instruccion = main.ejecutar_consulta_compuesta(
+    resultados = main.ejecutar_consulta_compuesta(
         "esperando_material_prioridad_menor"
     )
 
     assert tipos_recibidos == ["menor"]
     assert len(resultados) == 2
-    assert "menor prioridad" in instruccion
+
+
+def test_redactar_consulta_compuesta_respeta_las_unidades_y_todas_las_ordenes():
+    resultados = [
+        ("analizar_ordenes_esperando_material", [
+            {
+                "numero_orden": "45001234",
+                "prioridad": "Alta",
+                "descripcion_orden": "Reparacion de bomba",
+                "material": "MAT-003",
+                "descripcion_material": "Aceite hidraulico",
+                "cantidad_requerida": 2,
+                "stock": 0,
+                "unidad": "L",
+            },
+            {
+                "numero_orden": "45001237",
+                "prioridad": "Media",
+                "descripcion_orden": "Cambio de rodamiento",
+                "material": "MAT-002",
+                "descripcion_material": "Rodamiento",
+                "cantidad_requerida": 1,
+                "stock": 12,
+                "unidad": "UN",
+            },
+        ]),
+        ("analizar_prioridad_ordenes_esperando_material", {
+            "numero_orden": "45001234", "prioridad": "Alta"
+        }),
+    ]
+
+    respuesta = main.redactar_consulta_compuesta(
+        "esperando_material_prioridad", resultados
+    )
+
+    assert "45001234" in respuesta
+    assert "45001237" in respuesta
+    assert "2 L" in respuesta
+    assert "12 UN" in respuesta
+    assert "mayor prioridad es 45001234 (Alta)" in respuesta

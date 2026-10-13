@@ -48,11 +48,14 @@ function App() {
         },
       ]);
     } catch (error) {
+      const mensaje = error instanceof TypeError
+        ? "No se pudo conectar con la API."
+        : error.message;
       setMensajes((actuales) => [
         ...actuales,
         {
           tipo: "error",
-          contenido: `${error.message} Verifica que FastAPI este ejecutandose en ${API_URL}.`,
+          contenido: `${mensaje} Verifica que FastAPI este ejecutandose en ${API_URL}.`,
           herramientas: [],
         },
       ]);

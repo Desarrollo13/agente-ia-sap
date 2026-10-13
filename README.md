@@ -51,6 +51,18 @@ tiene otro valor.
 
 ## Uso
 
+La interfaz principal es el frontend React. Para iniciar API y frontend en dos
+terminales separadas, ejecutar desde la raiz del proyecto:
+
+```powershell
+.\iniciar_desarrollo.bat
+```
+
+Abrir la URL de Vite que aparece en la terminal del frontend, normalmente
+`http://127.0.0.1:5173`.
+
+La CLI se conserva como herramienta de desarrollo y diagnostico:
+
 ```powershell
 .\venv\Scripts\python.exe main.py
 ```

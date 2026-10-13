@@ -11,6 +11,7 @@ from tools import (
     consultar_orden,
     consultar_stock,
     consultar_usuario,
+    ErrorConsultaBaseDatos,
 )
 
 
@@ -67,6 +68,8 @@ def ejecutar_herramienta(nombre, argumentos):
         return ejecutor()
     except KeyError as error:
         return f"Falta el argumento obligatorio: {error.args[0]}."
+    except ErrorConsultaBaseDatos:
+        return "No se pudo consultar la base de datos."
 
 
 def ejecutar_consulta_compuesta(tipo_consulta):
@@ -128,13 +131,80 @@ def redactar_consulta_compuesta(tipo_consulta, resultados):
     )
 
 
+def redactar_consulta_stock(resultado):
+    if isinstance(resultado, str):
+        return resultado
+    return (
+        f"El material {resultado['material']} ({resultado['descripcion']}) "
+        f"tiene un stock actual de {resultado['stock']} {resultado['unidad']}."
+    )
+
+
+def redactar_lista_ordenes(ordenes):
+    if not ordenes:
+        return "No se encontraron ordenes."
+    return "\n".join(
+        f"- Orden {orden['numero_orden']} ({orden['prioridad']}, {orden['estado']}): "
+        f"{orden['descripcion']}."
+        for orden in ordenes
+    )
+
+
+def redactar_resultado_herramienta(nombre, resultado):
+    if isinstance(resultado, str):
+        return resultado
+
+    if nombre == "consultar_orden":
+        return (
+            f"La orden {resultado['numero_orden']} esta en estado "
+            f"{resultado['estado']} con prioridad {resultado['prioridad']}. "
+            f"Descripcion: {resultado['descripcion']}."
+        )
+    if nombre == "consultar_usuario":
+        return (
+            f"El usuario {resultado['legajo']} es {resultado['nombre']}, "
+            f"del sector {resultado['sector']}, con estado {resultado['estado']}."
+        )
+    if nombre == "consultar_stock":
+        return redactar_consulta_stock(resultado)
+    if nombre == "buscar_ordenes":
+        return redactar_lista_ordenes(resultado)
+    if nombre == "buscar_materiales_sin_stock":
+        if not resultado:
+            return "No hay materiales sin stock."
+        return "\n".join(
+            f"- {material['material']} ({material['descripcion']}): "
+            f"stock {material['stock']} {material['unidad']}."
+            for material in resultado
+        )
+    if nombre == "analizar_ordenes":
+        return (
+            f"Total de ordenes: {resultado['total_ordenes']}. "
+            f"En espera de material: {resultado['en_espera_material']}; "
+            f"en reparacion: {resultado['en_reparacion']}; "
+            f"finalizadas: {resultado['finalizadas']}."
+        )
+    return None
+
+
+def ejecutar_chat(**argumentos):
+    try:
+        return chat(**argumentos)
+    except Exception:
+        return None
+
+
 def main():
     pregunta = input("Escribi tu pregunta: ")
     messages = [{"role": "system", "content": SISTEMA}, {"role": "user", "content": pregunta}]
     tipo_consulta = routing.detectar_consulta_compuesta(pregunta)
 
     if tipo_consulta:
-        resultados = ejecutar_consulta_compuesta(tipo_consulta)
+        try:
+            resultados = ejecutar_consulta_compuesta(tipo_consulta)
+        except ErrorConsultaBaseDatos:
+            print("\nNo se pudo consultar la base de datos.")
+            return
         for nombre, resultado in resultados:
             print(f"Tool utilizada: {nombre}")
             print(f"Resultado de la Tool: {resultado}")
@@ -142,13 +212,17 @@ def main():
         print(redactar_consulta_compuesta(tipo_consulta, resultados))
         return
 
-    respuesta = chat(model=MODELO, messages=messages, tools=TOOLS)
+    respuesta = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
+    if respuesta is None:
+        print("\nNo se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.")
+        return
     if not respuesta.message.tool_calls:
         print("\nNo se utilizo ninguna herramienta.\n\nRespuesta:")
         print(respuesta.message.content)
         return
 
     messages.append(respuesta.message)
+    resultados_tools = []
     for tool_call in respuesta.message.tool_calls:
         nombre = tool_call.function.name
         argumentos = tool_call.function.arguments
@@ -156,9 +230,20 @@ def main():
         print(f"Tool utilizada: {nombre}")
         print(f"Argumentos: {argumentos}")
         print(f"Resultado de la Tool: {resultado}")
+        resultados_tools.append((nombre, resultado))
         messages.append({"role": "tool", "tool_name": nombre, "content": str(resultado)})
 
-    respuesta_final = chat(model=MODELO, messages=messages, tools=TOOLS)
+    if len(resultados_tools) == 1:
+        respuesta_directa = redactar_resultado_herramienta(*resultados_tools[0])
+        if respuesta_directa is not None:
+            print("\nRespuesta final:")
+            print(respuesta_directa)
+            return
+
+    respuesta_final = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
+    if respuesta_final is None:
+        print("\nNo se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.")
+        return
     print("\nRespuesta final:")
     print(respuesta_final.message.content)
 

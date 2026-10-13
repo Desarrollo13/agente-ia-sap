@@ -1,16 +1,27 @@
 from database import obtener_conexion
+from mysql.connector import Error as MySQLError
+
+
+class ErrorConsultaBaseDatos(Exception):
+    pass
 
 
 def _ejecutar_consulta(consulta, parametros=(), una_fila=False):
-    conexion = obtener_conexion()
-    cursor = conexion.cursor(dictionary=True)
+    conexion = None
+    cursor = None
 
     try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor(dictionary=True)
         cursor.execute(consulta, parametros)
         return cursor.fetchone() if una_fila else cursor.fetchall()
+    except MySQLError as error:
+        raise ErrorConsultaBaseDatos from error
     finally:
-        cursor.close()
-        conexion.close()
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
 
 
 def consultar_orden(numero_orden):

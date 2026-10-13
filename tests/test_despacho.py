@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
+from tools import ErrorConsultaBaseDatos
 
 
 def test_ejecutar_herramienta_despacha_la_consulta(monkeypatch):
@@ -77,3 +78,40 @@ def test_redactar_consulta_compuesta_respeta_las_unidades_y_todas_las_ordenes():
     assert "2 L" in respuesta
     assert "12 UN" in respuesta
     assert "mayor prioridad es 45001234 (Alta)" in respuesta
+
+
+def test_redactar_consulta_stock_conserva_stock_cero_y_unidad():
+    respuesta = main.redactar_consulta_stock(
+        {
+            "material": "MAT-003",
+            "descripcion": "Aceite hidraulico",
+            "stock": 0,
+            "unidad": "L",
+        }
+    )
+
+    assert respuesta == (
+        "El material MAT-003 (Aceite hidraulico) tiene un stock actual de 0 L."
+    )
+
+
+def test_redactar_materiales_sin_stock_conserva_la_unidad():
+    respuesta = main.redactar_resultado_herramienta(
+        "buscar_materiales_sin_stock",
+        [{"material": "MAT-003", "descripcion": "Aceite hidraulico", "stock": 0, "unidad": "L"}],
+    )
+
+    assert respuesta == "- MAT-003 (Aceite hidraulico): stock 0 L."
+
+
+def test_ejecutar_herramienta_informa_error_de_base_de_datos(monkeypatch):
+    def fallar(_material):
+        raise ErrorConsultaBaseDatos
+
+    monkeypatch.setattr(main, "consultar_stock", fallar)
+
+    resultado = main.ejecutar_herramienta(
+        "consultar_stock", {"material": "MAT-003"}
+    )
+
+    assert resultado == "No se pudo consultar la base de datos."

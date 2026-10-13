@@ -63,6 +63,24 @@ Ejemplos de preguntas:
 - `Cuantas ordenes hay y que ordenes tienen materiales sin stock?`
 - `Que ordenes esperando material tienen la prioridad mas baja?`
 
+## API REST
+
+Iniciar la API local:
+
+```powershell
+.\venv\Scripts\uvicorn.exe api:app --reload
+```
+
+La documentacion interactiva queda disponible en `http://127.0.0.1:8000/docs`.
+El endpoint `POST /api/chat` recibe una pregunta y devuelve la respuesta junto
+con las herramientas utilizadas.
+
+```json
+{
+  "pregunta": "Cual es el stock de MAT-003?"
+}
+```
+
 ## Pruebas
 
 ```powershell

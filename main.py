@@ -194,8 +194,7 @@ def ejecutar_chat(**argumentos):
         return None
 
 
-def main():
-    pregunta = input("Escribi tu pregunta: ")
+def procesar_pregunta(pregunta):
     messages = [{"role": "system", "content": SISTEMA}, {"role": "user", "content": pregunta}]
     tipo_consulta = routing.detectar_consulta_compuesta(pregunta)
 
@@ -203,23 +202,18 @@ def main():
         try:
             resultados = ejecutar_consulta_compuesta(tipo_consulta)
         except ErrorConsultaBaseDatos:
-            print("\nNo se pudo consultar la base de datos.")
-            return
-        for nombre, resultado in resultados:
-            print(f"Tool utilizada: {nombre}")
-            print(f"Resultado de la Tool: {resultado}")
-        print("\nRespuesta final:")
-        print(redactar_consulta_compuesta(tipo_consulta, resultados))
-        return
+            return {"respuesta": "No se pudo consultar la base de datos.", "herramientas_usadas": [], "resultados": []}
+        return {
+            "respuesta": redactar_consulta_compuesta(tipo_consulta, resultados),
+            "herramientas_usadas": [nombre for nombre, _ in resultados],
+            "resultados": resultados,
+        }
 
     respuesta = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
     if respuesta is None:
-        print("\nNo se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.")
-        return
+        return {"respuesta": "No se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.", "herramientas_usadas": [], "resultados": []}
     if not respuesta.message.tool_calls:
-        print("\nNo se utilizo ninguna herramienta.\n\nRespuesta:")
-        print(respuesta.message.content)
-        return
+        return {"respuesta": respuesta.message.content, "herramientas_usadas": [], "resultados": []}
 
     messages.append(respuesta.message)
     resultados_tools = []
@@ -227,25 +221,44 @@ def main():
         nombre = tool_call.function.name
         argumentos = tool_call.function.arguments
         resultado = ejecutar_herramienta(nombre, argumentos)
-        print(f"Tool utilizada: {nombre}")
-        print(f"Argumentos: {argumentos}")
-        print(f"Resultado de la Tool: {resultado}")
-        resultados_tools.append((nombre, resultado))
+        resultados_tools.append((nombre, argumentos, resultado))
         messages.append({"role": "tool", "tool_name": nombre, "content": str(resultado)})
 
     if len(resultados_tools) == 1:
-        respuesta_directa = redactar_resultado_herramienta(*resultados_tools[0])
+        nombre, _, resultado = resultados_tools[0]
+        respuesta_directa = redactar_resultado_herramienta(nombre, resultado)
         if respuesta_directa is not None:
-            print("\nRespuesta final:")
-            print(respuesta_directa)
-            return
+            return {
+                "respuesta": respuesta_directa,
+                "herramientas_usadas": [nombre],
+                "resultados": resultados_tools,
+            }
 
     respuesta_final = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
     if respuesta_final is None:
-        print("\nNo se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.")
-        return
+        return {"respuesta": "No se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.", "herramientas_usadas": [nombre for nombre, _, _ in resultados_tools], "resultados": resultados_tools}
+    return {
+        "respuesta": respuesta_final.message.content,
+        "herramientas_usadas": [nombre for nombre, _, _ in resultados_tools],
+        "resultados": resultados_tools,
+    }
+
+
+def main():
+    pregunta = input("Escribi tu pregunta: ")
+    respuesta = procesar_pregunta(pregunta)
+    for resultado in respuesta["resultados"]:
+        if len(resultado) == 2:
+            nombre, datos = resultado
+            print(f"Tool utilizada: {nombre}")
+            print(f"Resultado de la Tool: {datos}")
+        else:
+            nombre, argumentos, datos = resultado
+            print(f"Tool utilizada: {nombre}")
+            print(f"Argumentos: {argumentos}")
+            print(f"Resultado de la Tool: {datos}")
     print("\nRespuesta final:")
-    print(respuesta_final.message.content)
+    print(respuesta["respuesta"])
 
 
 if __name__ == "__main__":

@@ -35,3 +35,18 @@ def test_consultar_chat_rechaza_pregunta_vacia():
     respuesta = cliente.post("/api/chat", json={"pregunta": ""})
 
     assert respuesta.status_code == 422
+
+
+def test_api_permite_el_origen_del_frontend():
+    cliente = TestClient(api.app)
+
+    respuesta = cliente.options(
+        "/api/chat",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"

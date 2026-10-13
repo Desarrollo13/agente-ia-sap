@@ -81,6 +81,19 @@ con las herramientas utilizadas.
 }
 ```
 
+## Frontend web
+
+Con la API iniciada, abrir otra terminal y ejecutar:
+
+```powershell
+cd frontend
+npm.cmd install
+npm.cmd run dev
+```
+
+Vite mostrara la URL local, normalmente `http://127.0.0.1:5173`. Para generar
+los archivos de produccion usar `npm.cmd run build`.
+
 ## Pruebas
 
 ```powershell

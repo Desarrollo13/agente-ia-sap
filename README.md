@@ -34,6 +34,21 @@ Descargar el modelo de Ollama si fuera necesario:
 ollama pull qwen2.5:3b
 ```
 
+## Base de datos
+
+Crear una base vacia con el mismo nombre configurado en `DB_NAME` y ejecutar los
+scripts incluidos:
+
+```powershell
+mysql -u root -p -e "CREATE DATABASE agente_ia_sap CHARACTER SET utf8mb4"
+mysql -u root -p agente_ia_sap < database/schema.sql
+mysql -u root -p agente_ia_sap < database/seed.sql
+```
+
+`schema.sql` crea las tablas si no existen y `seed.sql` inserta los datos de
+ejemplo sin duplicarlos. Ajustar `agente_ia_sap` en los comandos si `DB_NAME`
+tiene otro valor.
+
 ## Uso
 
 ```powershell

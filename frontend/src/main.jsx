@@ -31,6 +31,7 @@ function App() {
   const [mensajes, setMensajes] = useState(cargarHistorial);
   const [resumen, setResumen] = useState(null);
   const [errorResumen, setErrorResumen] = useState(false);
+  const [estadoServicios, setEstadoServicios] = useState(null);
 
   useEffect(() => {
     localStorage.setItem("historial-sap", JSON.stringify(mensajes));
@@ -47,8 +48,19 @@ function App() {
     }
   }
 
+  async function cargarEstado() {
+    try {
+      const respuesta = await fetch(`${API_URL}/api/estado`);
+      if (!respuesta.ok) throw new Error();
+      setEstadoServicios(await respuesta.json());
+    } catch {
+      setEstadoServicios({ disponible: false, base_datos: false, ollama: false });
+    }
+  }
+
   useEffect(() => {
     cargarResumen();
+    cargarEstado();
   }, []);
 
   async function enviarPregunta(evento) {
@@ -112,9 +124,9 @@ function App() {
         <p className="etiqueta">CONSOLA OPERATIVA</p>
         <h1>Consulta el estado de planta.</h1>
         <p className="descripcion">Datos de ordenes, materiales y stock conectados a MySQL.</p>
-        <div className="estado"><i /> Sistema disponible</div>
-        <div className="panel-dato"><strong>Fuente</strong><span>MySQL + Ollama</span></div>
-        <div className="panel-dato"><strong>Modelo</strong><span>qwen2.5:3b</span></div>
+        <div className={`estado ${estadoServicios?.disponible ? "correcto" : "error"}`}><i /> {estadoServicios ? (estadoServicios.disponible ? "Sistema disponible" : "Servicio no disponible") : "Verificando sistema"}</div>
+        <div className="panel-dato"><strong>Fuente</strong><span>MySQL {estadoServicios?.base_datos ? "conectado" : "sin conexion"}</span></div>
+        <div className="panel-dato"><strong>Modelo</strong><span>qwen2.5:3b {estadoServicios?.ollama ? "disponible" : "no disponible"}</span></div>
       </aside>
 
       <section className="chat">
@@ -124,7 +136,7 @@ function App() {
           <div><span>En espera</span><strong>{resumen?.en_espera_material ?? "-"}</strong></div>
           <div><span>Sin stock</span><strong>{resumen?.materiales_sin_stock ?? "-"}</strong></div>
           <div><span>Prioridad alta</span><strong>{resumen?.orden_mayor_prioridad ?? "-"}</strong></div>
-          <button className="actualizar" onClick={cargarResumen}>Actualizar</button>
+          <button className="actualizar" onClick={() => { cargarResumen(); cargarEstado(); }}>Actualizar</button>
           {errorResumen && <p>No se pudo actualizar el resumen.</p>}
         </section>
         <div className="mensajes">

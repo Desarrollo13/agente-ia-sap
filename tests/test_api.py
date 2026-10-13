@@ -102,3 +102,21 @@ def test_consultar_resumen_devuelve_indicadores(monkeypatch):
         "materiales_sin_stock": 1,
         "orden_mayor_prioridad": "45001234",
     }
+
+
+def test_consultar_estado_verifica_base_y_modelo(monkeypatch):
+    class RespuestaModelos:
+        models = [type("Modelo", (), {"model": "qwen2.5:3b"})()]
+
+    monkeypatch.setattr(api, "analizar_ordenes", lambda: {})
+    monkeypatch.setattr(api, "listar_modelos", lambda: RespuestaModelos())
+    cliente = TestClient(api.app)
+
+    respuesta = cliente.get("/api/estado")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {
+        "disponible": True,
+        "base_datos": True,
+        "ollama": True,
+    }

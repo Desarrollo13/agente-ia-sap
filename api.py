@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from ollama import list as listar_modelos
 from pydantic import BaseModel, Field
 from typing import Literal
 
@@ -43,6 +44,12 @@ class ResumenOperativo(BaseModel):
     orden_mayor_prioridad: str | None
 
 
+class EstadoServicios(BaseModel):
+    disponible: bool
+    base_datos: bool
+    ollama: bool
+
+
 @app.post("/api/chat", response_model=RespuestaChat)
 def consultar_chat(consulta: ConsultaChat):
     resultado = procesar_pregunta(
@@ -74,4 +81,25 @@ def consultar_resumen():
         "orden_mayor_prioridad": (
             orden_prioritaria["numero_orden"] if orden_prioritaria else None
         ),
+    }
+
+
+@app.get("/api/estado", response_model=EstadoServicios)
+def consultar_estado():
+    try:
+        analizar_ordenes()
+        base_datos = True
+    except ErrorConsultaBaseDatos:
+        base_datos = False
+
+    try:
+        modelos = listar_modelos().models
+        ollama_disponible = any(modelo.model == "qwen2.5:3b" for modelo in modelos)
+    except Exception:
+        ollama_disponible = False
+
+    return {
+        "disponible": base_datos and ollama_disponible,
+        "base_datos": base_datos,
+        "ollama": ollama_disponible,
     }

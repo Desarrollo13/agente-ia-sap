@@ -4,6 +4,9 @@ Agente conversacional en Python para consultar ordenes de mantenimiento SAP,
 usuarios, materiales y stock mediante lenguaje natural. Usa Ollama para
 interpretar preguntas y MySQL como fuente de datos.
 
+La guia completa de arquitectura, seguridad, roles y flujos de uso esta en
+[`DOCUMENTACION.md`](DOCUMENTACION.md).
+
 ## Requisitos
 
 - Python 3.12
@@ -49,7 +52,9 @@ mysql -u root -p agente_ia_sap < database/seed.sql
 ejemplo sin duplicarlos. Ajustar `agente_ia_sap` en los comandos si `DB_NAME`
 tiene otro valor.
 
-Para habilitar el acceso, ejecutar tambien `database/migrations/001_agrega_cuentas.sql`. La migracion crea las cuentas, sesiones y conversaciones. Luego crear la cuenta inicial:
+Para habilitar el acceso, ejecutar tambien las migraciones en orden:
+`001_agrega_cuentas.sql`, `002_agrega_roles_y_auditoria.sql` y
+`003_refuerza_seguridad.sql`. Luego crear la cuenta inicial:
 
 ```powershell
 .\venv\Scripts\python.exe crear_cuenta.py admin
@@ -94,10 +99,9 @@ Primero iniciar sesion en `POST /api/login`; los endpoints de chat, resumen y
 estado requieren el token devuelto como `Authorization: Bearer <token>`. Las
 sesiones vencen a las ocho horas y `POST /api/logout` las revoca.
 
-Las cuentas tienen los roles `operador`, `supervisor` y `administrador`. Ejecutar
-tambien `database/migrations/002_agrega_roles_y_auditoria.sql` para habilitar
-los roles y el registro de accesos y consultas. La cuenta inicial `admin` queda
-como administradora; `GET /api/auditoria` requiere ese rol.
+Las cuentas tienen los roles `operador` y `administrador`. La cuenta inicial
+`admin` queda como administradora; `GET /api/auditoria` y los endpoints de
+cuentas requieren ese rol.
 
 Ejecutar despues `database/migrations/003_refuerza_seguridad.sql`. Esta
 migracion agrega el control de intentos de inicio de sesion y los indices usados

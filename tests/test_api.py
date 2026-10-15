@@ -169,6 +169,28 @@ def test_auditoria_requiere_administrador(monkeypatch):
     limpiar_autenticacion()
 
 
+def test_auditoria_rechaza_a_un_operador(monkeypatch):
+    api.app.dependency_overrides[api.obtener_usuario_actual] = lambda: "operador"
+    monkeypatch.setattr(api, "obtener_rol_cuenta", lambda _usuario: "operador")
+
+    respuesta = TestClient(api.app).get("/api/auditoria")
+
+    assert respuesta.status_code == 403
+    limpiar_autenticacion()
+
+
+def test_auditoria_informa_error_de_base_de_datos(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+
+    def falla():
+        raise api.ErrorConsultaBaseDatos()
+
+    monkeypatch.setattr(api, "listar_auditoria", falla)
+
+    assert TestClient(api.app).get("/api/auditoria").status_code == 503
+    limpiar_autenticacion()
+
+
 def test_listar_conversaciones_devuelve_titulo_y_fecha(monkeypatch):
     monkeypatch.setattr(api, "listar_conversaciones", lambda _usuario: [{
         "id": 3,

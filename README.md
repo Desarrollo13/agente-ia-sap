@@ -49,6 +49,12 @@ mysql -u root -p agente_ia_sap < database/seed.sql
 ejemplo sin duplicarlos. Ajustar `agente_ia_sap` en los comandos si `DB_NAME`
 tiene otro valor.
 
+Para habilitar el acceso, ejecutar tambien `database/migrations/001_agrega_cuentas.sql`. La migracion crea las cuentas, sesiones y conversaciones. Luego crear la cuenta inicial:
+
+```powershell
+.\venv\Scripts\python.exe crear_cuenta.py admin
+```
+
 ## Uso
 
 La interfaz principal es el frontend React. Para iniciar API y frontend en dos
@@ -84,12 +90,24 @@ Iniciar la API local:
 ```
 
 La documentacion interactiva queda disponible en `http://127.0.0.1:8000/docs`.
-El endpoint `POST /api/chat` recibe una pregunta y devuelve la respuesta junto
-con las herramientas utilizadas.
+Primero iniciar sesion en `POST /api/login`; los endpoints de chat, resumen y
+estado requieren el token devuelto como `Authorization: Bearer <token>`. Las
+sesiones vencen a las ocho horas y `POST /api/logout` las revoca.
+
+Las cuentas tienen los roles `operador`, `supervisor` y `administrador`. Ejecutar
+tambien `database/migrations/002_agrega_roles_y_auditoria.sql` para habilitar
+los roles y el registro de accesos y consultas. La cuenta inicial `admin` queda
+como administradora; `GET /api/auditoria` requiere ese rol.
+
+Ejecutar despues `database/migrations/003_refuerza_seguridad.sql`. Esta
+migracion agrega el control de intentos de inicio de sesion y los indices usados
+por sesiones y conversaciones. Se bloquean cinco intentos fallidos por usuario
+y direccion IP durante quince minutos.
 
 ```json
 {
-  "pregunta": "Cual es el stock de MAT-003?"
+  "usuario": "admin",
+  "contrasena": "tu-contrasena"
 }
 ```
 

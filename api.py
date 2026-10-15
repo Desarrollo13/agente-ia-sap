@@ -1,7 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from ollama import list as listar_modelos
 from pydantic import BaseModel, Field
+from datetime import datetime
 from typing import Literal
 
 from main import procesar_pregunta
@@ -10,7 +12,22 @@ from tools import (
     analizar_ordenes,
     analizar_prioridad_ordenes_esperando_material,
     buscar_materiales_sin_stock,
+    autenticar_cuenta,
+    crear_conversacion,
+    crear_sesion,
+    eliminar_sesion,
+    guardar_interaccion_chat,
+    listar_conversaciones,
+    obtener_historial_conversacion,
+    obtener_mensajes_conversacion,
+    obtener_rol_cuenta,
+    obtener_usuario_por_sesion,
+    registrar_evento,
+    listar_auditoria,
+    contar_intentos_login,
+    registrar_intento_login,
 )
+from seguridad import generar_token, resumir_token
 
 
 app = FastAPI(title="Agente IA SAP", version="1.0.0")
@@ -18,8 +35,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+esquema_bearer = HTTPBearer(auto_error=False)
 
 
 class MensajeHistorial(BaseModel):
@@ -29,12 +47,79 @@ class MensajeHistorial(BaseModel):
 
 class ConsultaChat(BaseModel):
     pregunta: str = Field(min_length=1, max_length=1000)
-    historial: list[MensajeHistorial] = Field(default_factory=list, max_length=10)
+    conversacion_id: int | None = Field(default=None, gt=0)
 
 
 class RespuestaChat(BaseModel):
     respuesta: str
     herramientas_usadas: list[str]
+    conversacion_id: int
+
+
+class Credenciales(BaseModel):
+    usuario: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_.-]+$")
+    contrasena: str = Field(min_length=1, max_length=200)
+
+
+class Sesion(BaseModel):
+    token: str
+    usuario: str
+    rol: str
+
+
+class Conversacion(BaseModel):
+    id: int
+    titulo: str
+    actualizado_en: datetime
+
+
+class MensajeConversacion(BaseModel):
+    rol: Literal["user", "assistant"]
+    contenido: str
+    creado_en: datetime
+
+
+class HistorialConversacion(BaseModel):
+    id: int
+    mensajes: list[MensajeConversacion]
+
+
+class EventoAuditoria(BaseModel):
+    usuario: str
+    evento: str
+    detalle: str | None
+    creado_en: datetime
+
+
+def obtener_usuario_actual(
+    credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer),
+):
+    if credenciales is None or credenciales.scheme.lower() != "bearer":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autenticado.")
+    try:
+        usuario = obtener_usuario_por_sesion(resumir_token(credenciales.credentials))
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo validar la sesion.") from error
+    if usuario is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesion invalida o vencida.")
+    return usuario
+
+
+def requiere_administrador(usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        rol = obtener_rol_cuenta(usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo verificar el rol.") from error
+    if rol != "administrador":
+        raise HTTPException(status_code=403, detail="Requiere rol de administrador.")
+    return usuario
+
+
+def registrar_evento_sin_bloquear(usuario, evento, detalle=None):
+    try:
+        registrar_evento(usuario, evento, detalle)
+    except ErrorConsultaBaseDatos:
+        pass
 
 
 class ResumenOperativo(BaseModel):
@@ -50,20 +135,92 @@ class EstadoServicios(BaseModel):
     ollama: bool
 
 
+
+@app.post("/api/login", response_model=Sesion)
+def iniciar_sesion(credenciales: Credenciales, request: Request):
+    direccion_ip = request.client.host if request.client else "desconocida"
+    try:
+        if contar_intentos_login(credenciales.usuario, direccion_ip) >= 5:
+            raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta nuevamente en 15 minutos.")
+        autenticada = autenticar_cuenta(credenciales.usuario, credenciales.contrasena)
+        registrar_intento_login(credenciales.usuario, direccion_ip, autenticada)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo iniciar sesion.") from error
+    if not autenticada:
+        raise HTTPException(status_code=401, detail="Usuario o contrasena incorrectos.")
+    token = generar_token()
+    try:
+        crear_sesion(credenciales.usuario, resumir_token(token))
+        rol = obtener_rol_cuenta(credenciales.usuario)
+        registrar_evento_sin_bloquear(credenciales.usuario, "inicio_sesion")
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo iniciar sesion.") from error
+    return {"token": token, "usuario": credenciales.usuario, "rol": rol}
+
+
+@app.post("/api/logout", status_code=status.HTTP_204_NO_CONTENT)
+def cerrar_sesion(usuario: str = Depends(obtener_usuario_actual), credenciales: HTTPAuthorizationCredentials = Depends(esquema_bearer)):
+    eliminar_sesion(resumir_token(credenciales.credentials))
+    registrar_evento_sin_bloquear(usuario, "cierre_sesion")
+
+
+@app.get("/api/conversaciones", response_model=list[Conversacion])
+def consultar_conversaciones(usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        return listar_conversaciones(usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudieron consultar las conversaciones.") from error
+
+
+@app.get("/api/conversaciones/{conversacion_id}", response_model=HistorialConversacion)
+def consultar_conversacion(conversacion_id: int, usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        mensajes = obtener_mensajes_conversacion(conversacion_id, usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo consultar la conversacion.") from error
+    if mensajes is None:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
+    return {"id": conversacion_id, "mensajes": mensajes}
+
+
+@app.get("/api/auditoria", response_model=list[EventoAuditoria])
+def consultar_auditoria(_usuario: str = Depends(requiere_administrador)):
+    try:
+        return listar_auditoria()
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo consultar la auditoria.") from error
+
+
 @app.post("/api/chat", response_model=RespuestaChat)
-def consultar_chat(consulta: ConsultaChat):
+def consultar_chat(consulta: ConsultaChat, usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        conversacion_id = consulta.conversacion_id or crear_conversacion(usuario)
+        historial = obtener_historial_conversacion(conversacion_id, usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo preparar la conversacion.") from error
+    if historial is None:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
     resultado = procesar_pregunta(
         consulta.pregunta,
-        [mensaje.model_dump() for mensaje in consulta.historial],
+        historial,
     )
+    try:
+        guardada = guardar_interaccion_chat(
+            conversacion_id, usuario, consulta.pregunta, resultado["respuesta"]
+        )
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo guardar la conversacion.") from error
+    if not guardada:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
     return {
         "respuesta": resultado["respuesta"],
         "herramientas_usadas": resultado["herramientas_usadas"],
+        "conversacion_id": conversacion_id,
     }
 
 
 @app.get("/api/resumen", response_model=ResumenOperativo)
-def consultar_resumen():
+def consultar_resumen(_usuario: str = Depends(obtener_usuario_actual)):
     try:
         ordenes = analizar_ordenes()
         materiales_sin_stock = buscar_materiales_sin_stock()
@@ -74,6 +231,7 @@ def consultar_resumen():
             detail="No se pudo consultar la base de datos.",
         ) from error
 
+    registrar_evento_sin_bloquear(_usuario, "consulta_resumen")
     return {
         "total_ordenes": ordenes["total_ordenes"],
         "en_espera_material": ordenes["en_espera_material"],
@@ -85,7 +243,7 @@ def consultar_resumen():
 
 
 @app.get("/api/estado", response_model=EstadoServicios)
-def consultar_estado():
+def consultar_estado(_usuario: str = Depends(obtener_usuario_actual)):
     try:
         analizar_ordenes()
         base_datos = True
@@ -98,6 +256,7 @@ def consultar_estado():
     except Exception:
         ollama_disponible = False
 
+    registrar_evento_sin_bloquear(_usuario, "consulta_estado")
     return {
         "disponible": base_datos and ollama_disponible,
         "base_datos": base_datos,

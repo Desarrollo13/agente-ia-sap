@@ -1,11 +1,28 @@
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import api
+import tools
+
+
+@pytest.fixture(autouse=True)
+def evitar_auditoria_real(monkeypatch):
+    monkeypatch.setattr(api, "registrar_evento", lambda *_args: None)
+    monkeypatch.setattr(api, "contar_intentos_login", lambda *_args: 0)
+    monkeypatch.setattr(api, "registrar_intento_login", lambda *_args: None)
+
+
+def autenticar_como_admin():
+    api.app.dependency_overrides[api.obtener_usuario_actual] = lambda: "admin"
+
+
+def limpiar_autenticacion():
+    api.app.dependency_overrides.clear()
 
 
 def test_consultar_chat_devuelve_respuesta_y_herramientas(monkeypatch):
@@ -13,95 +30,70 @@ def test_consultar_chat_devuelve_respuesta_y_herramientas(monkeypatch):
 
     def procesar(pregunta, historial):
         historial_recibido.extend(historial)
-        return {
-            "respuesta": f"Respuesta para: {pregunta}",
-            "herramientas_usadas": ["consultar_stock"],
-            "resultados": [],
-        }
+        return {"respuesta": f"Respuesta para: {pregunta}", "herramientas_usadas": ["consultar_stock"]}
 
-    monkeypatch.setattr(
-        api,
-        "procesar_pregunta",
-        procesar,
-    )
-    cliente = TestClient(api.app)
-
-    respuesta = cliente.post("/api/chat", json={"pregunta": "Stock de MAT-003"})
+    monkeypatch.setattr(api, "procesar_pregunta", procesar)
+    monkeypatch.setattr(api, "crear_conversacion", lambda _usuario: 7)
+    monkeypatch.setattr(api, "obtener_historial_conversacion", lambda *_args: [])
+    monkeypatch.setattr(api, "guardar_interaccion_chat", lambda *_args: True)
+    autenticar_como_admin()
+    respuesta = TestClient(api.app).post("/api/chat", json={"pregunta": "Stock de MAT-003"})
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {
-        "respuesta": "Respuesta para: Stock de MAT-003",
-        "herramientas_usadas": ["consultar_stock"],
-    }
+    assert respuesta.json() == {"respuesta": "Respuesta para: Stock de MAT-003", "herramientas_usadas": ["consultar_stock"], "conversacion_id": 7}
     assert historial_recibido == []
+    limpiar_autenticacion()
 
 
-def test_consultar_chat_envia_el_historial_al_agente(monkeypatch):
+def test_consultar_chat_envia_el_historial_persistido_al_agente(monkeypatch):
     historial_recibido = []
 
     def procesar(_pregunta, historial):
         historial_recibido.extend(historial)
-        return {"respuesta": "Correcto.", "herramientas_usadas": [], "resultados": []}
+        return {"respuesta": "Correcto.", "herramientas_usadas": []}
 
     monkeypatch.setattr(api, "procesar_pregunta", procesar)
-    cliente = TestClient(api.app)
-
-    respuesta = cliente.post("/api/chat", json={
-        "pregunta": "Y cual es su prioridad?",
-        "historial": [{"role": "user", "content": "Consulta la orden 45001234"}],
-    })
+    monkeypatch.setattr(api, "obtener_historial_conversacion", lambda *_args: [{"role": "user", "content": "Consulta la orden 45001234"}])
+    monkeypatch.setattr(api, "guardar_interaccion_chat", lambda *_args: True)
+    autenticar_como_admin()
+    respuesta = TestClient(api.app).post("/api/chat", json={"pregunta": "Y cual es su prioridad?", "conversacion_id": 3})
 
     assert respuesta.status_code == 200
-    assert historial_recibido == [
-        {"role": "user", "content": "Consulta la orden 45001234"}
-    ]
+    assert historial_recibido == [{"role": "user", "content": "Consulta la orden 45001234"}]
+    limpiar_autenticacion()
 
 
 def test_consultar_chat_rechaza_pregunta_vacia():
+    autenticar_como_admin()
+    assert TestClient(api.app).post("/api/chat", json={"pregunta": ""}).status_code == 422
+    limpiar_autenticacion()
+
+
+def test_endpoints_operativos_requieren_autenticacion():
     cliente = TestClient(api.app)
-
-    respuesta = cliente.post("/api/chat", json={"pregunta": ""})
-
-    assert respuesta.status_code == 422
+    assert cliente.post("/api/chat", json={"pregunta": "Stock"}).status_code == 401
+    assert cliente.get("/api/conversaciones").status_code == 401
+    assert cliente.get("/api/conversaciones/1").status_code == 401
+    assert cliente.get("/api/resumen").status_code == 401
+    assert cliente.get("/api/estado").status_code == 401
 
 
 def test_api_permite_el_origen_del_frontend():
-    cliente = TestClient(api.app)
-
-    respuesta = cliente.options(
-        "/api/chat",
-        headers={
-            "Origin": "http://localhost:5173",
-            "Access-Control-Request-Method": "POST",
-        },
-    )
-
+    respuesta = TestClient(api.app).options("/api/chat", headers={"Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST"})
     assert respuesta.status_code == 200
     assert respuesta.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
 def test_consultar_resumen_devuelve_indicadores(monkeypatch):
-    monkeypatch.setattr(api, "analizar_ordenes", lambda: {
-        "total_ordenes": 4,
-        "en_espera_material": 2,
-    })
+    monkeypatch.setattr(api, "analizar_ordenes", lambda: {"total_ordenes": 4, "en_espera_material": 2})
     monkeypatch.setattr(api, "buscar_materiales_sin_stock", lambda: [{"material": "MAT-003"}])
-    monkeypatch.setattr(
-        api,
-        "analizar_prioridad_ordenes_esperando_material",
-        lambda _tipo: {"numero_orden": "45001234"},
-    )
-    cliente = TestClient(api.app)
-
-    respuesta = cliente.get("/api/resumen")
+    monkeypatch.setattr(api, "analizar_prioridad_ordenes_esperando_material", lambda _tipo: {"numero_orden": "45001234"})
+    autenticar_como_admin()
+    respuesta = TestClient(api.app).get("/api/resumen")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {
-        "total_ordenes": 4,
-        "en_espera_material": 2,
-        "materiales_sin_stock": 1,
-        "orden_mayor_prioridad": "45001234",
-    }
+    assert respuesta.json() == {"total_ordenes": 4, "en_espera_material": 2, "materiales_sin_stock": 1, "orden_mayor_prioridad": "45001234"}
+    limpiar_autenticacion()
 
 
 def test_consultar_estado_verifica_base_y_modelo(monkeypatch):
@@ -110,13 +102,140 @@ def test_consultar_estado_verifica_base_y_modelo(monkeypatch):
 
     monkeypatch.setattr(api, "analizar_ordenes", lambda: {})
     monkeypatch.setattr(api, "listar_modelos", lambda: RespuestaModelos())
-    cliente = TestClient(api.app)
-
-    respuesta = cliente.get("/api/estado")
+    autenticar_como_admin()
+    respuesta = TestClient(api.app).get("/api/estado")
 
     assert respuesta.status_code == 200
-    assert respuesta.json() == {
-        "disponible": True,
-        "base_datos": True,
-        "ollama": True,
-    }
+    assert respuesta.json() == {"disponible": True, "base_datos": True, "ollama": True}
+    limpiar_autenticacion()
+
+
+def test_login_crea_una_sesion(monkeypatch):
+    monkeypatch.setattr(api, "autenticar_cuenta", lambda *_args: True)
+    monkeypatch.setattr(api, "obtener_rol_cuenta", lambda _usuario: "administrador")
+    sesiones = []
+    monkeypatch.setattr(api, "crear_sesion", lambda usuario, token: sesiones.append((usuario, token)))
+
+    respuesta = TestClient(api.app).post("/api/login", json={"usuario": "admin", "contrasena": "secreta"})
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["usuario"] == "admin"
+    assert respuesta.json()["rol"] == "administrador"
+    assert respuesta.json()["token"]
+    assert sesiones[0][0] == "admin"
+    assert sesiones[0][1] != respuesta.json()["token"]
+
+
+def test_login_rechaza_credenciales_incorrectas(monkeypatch):
+    monkeypatch.setattr(api, "autenticar_cuenta", lambda *_args: False)
+    respuesta = TestClient(api.app).post("/api/login", json={"usuario": "admin", "contrasena": "error"})
+    assert respuesta.status_code == 401
+
+
+def test_login_bloquea_despues_de_cinco_intentos(monkeypatch):
+    monkeypatch.setattr(api, "contar_intentos_login", lambda *_args: 5)
+
+    respuesta = TestClient(api.app).post("/api/login", json={"usuario": "admin", "contrasena": "error"})
+
+    assert respuesta.status_code == 429
+
+
+def test_logout_revoca_la_sesion_aunque_falle_la_auditoria(monkeypatch):
+    token_eliminado = []
+    autenticar_como_admin()
+    monkeypatch.setattr(api, "eliminar_sesion", lambda token: token_eliminado.append(token))
+    monkeypatch.setattr(api, "registrar_evento", lambda *_args: (_ for _ in ()).throw(api.ErrorConsultaBaseDatos()))
+
+    respuesta = TestClient(api.app).post("/api/logout", headers={"Authorization": "Bearer token-prueba"})
+
+    assert respuesta.status_code == 204
+    assert token_eliminado
+    limpiar_autenticacion()
+
+
+def test_auditoria_requiere_administrador(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+    monkeypatch.setattr(api, "listar_auditoria", lambda: [{
+        "usuario": "admin",
+        "evento": "inicio_sesion",
+        "detalle": None,
+        "creado_en": "2026-10-14T12:00:00",
+    }])
+
+    respuesta = TestClient(api.app).get("/api/auditoria")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()[0]["evento"] == "inicio_sesion"
+    limpiar_autenticacion()
+
+
+def test_listar_conversaciones_devuelve_titulo_y_fecha(monkeypatch):
+    monkeypatch.setattr(api, "listar_conversaciones", lambda _usuario: [{
+        "id": 3,
+        "titulo": "Consulta de stock",
+        "actualizado_en": "2026-10-15T10:00:00",
+    }])
+    autenticar_como_admin()
+
+    respuesta = TestClient(api.app).get("/api/conversaciones")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()[0]["titulo"] == "Consulta de stock"
+    assert respuesta.json()[0]["actualizado_en"] == "2026-10-15T10:00:00"
+    limpiar_autenticacion()
+
+
+def test_abrir_conversacion_propia_devuelve_mensajes_en_orden(monkeypatch):
+    monkeypatch.setattr(api, "obtener_mensajes_conversacion", lambda *_args: [
+        {"rol": "user", "contenido": "Consulta inicial", "creado_en": "2026-10-15T10:00:00"},
+        {"rol": "assistant", "contenido": "Respuesta", "creado_en": "2026-10-15T10:00:01"},
+    ])
+    autenticar_como_admin()
+
+    respuesta = TestClient(api.app).get("/api/conversaciones/3")
+
+    assert respuesta.status_code == 200
+    assert respuesta.json()["id"] == 3
+    assert [mensaje["rol"] for mensaje in respuesta.json()["mensajes"]] == ["user", "assistant"]
+    limpiar_autenticacion()
+
+
+def test_abrir_conversacion_ajena_devuelve_404(monkeypatch):
+    monkeypatch.setattr(api, "obtener_mensajes_conversacion", lambda *_args: None)
+    autenticar_como_admin()
+
+    respuesta = TestClient(api.app).get("/api/conversaciones/9")
+
+    assert respuesta.status_code == 404
+    limpiar_autenticacion()
+
+
+def test_abrir_conversacion_informa_error_de_base_de_datos(monkeypatch):
+    def falla(*_args):
+        raise api.ErrorConsultaBaseDatos()
+
+    monkeypatch.setattr(api, "obtener_mensajes_conversacion", falla)
+    autenticar_como_admin()
+
+    assert TestClient(api.app).get("/api/conversaciones/3").status_code == 503
+    limpiar_autenticacion()
+
+
+def test_historial_visual_limita_a_cien_mensajes_y_respeta_el_orden(monkeypatch):
+    consultas = []
+
+    def consultar(_consulta, parametros=(), una_fila=False):
+        consultas.append((parametros, una_fila))
+        if una_fila:
+            return {"id": 3}
+        return [
+            {"rol": "assistant", "contenido": "Mas reciente", "creado_en": "2026-10-15T10:00:01"},
+            {"rol": "user", "contenido": "Primero", "creado_en": "2026-10-15T10:00:00"},
+        ]
+
+    monkeypatch.setattr(tools, "_ejecutar_consulta", consultar)
+
+    mensajes = tools.obtener_mensajes_conversacion(3, "admin")
+
+    assert consultas[1][0] == (3, 100)
+    assert [mensaje["contenido"] for mensaje in mensajes] == ["Primero", "Mas reciente"]

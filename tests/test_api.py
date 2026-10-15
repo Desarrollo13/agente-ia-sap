@@ -74,6 +74,7 @@ def test_endpoints_operativos_requieren_autenticacion():
     assert cliente.post("/api/chat", json={"pregunta": "Stock"}).status_code == 401
     assert cliente.get("/api/conversaciones").status_code == 401
     assert cliente.get("/api/conversaciones/1").status_code == 401
+    assert cliente.get("/api/cuentas").status_code == 401
     assert cliente.get("/api/resumen").status_code == 401
     assert cliente.get("/api/estado").status_code == 401
 
@@ -188,6 +189,64 @@ def test_auditoria_informa_error_de_base_de_datos(monkeypatch):
     monkeypatch.setattr(api, "listar_auditoria", falla)
 
     assert TestClient(api.app).get("/api/auditoria").status_code == 503
+    limpiar_autenticacion()
+
+
+def test_cuentas_requiere_administrador(monkeypatch):
+    api.app.dependency_overrides[api.obtener_usuario_actual] = lambda: "operador"
+    monkeypatch.setattr(api, "obtener_rol_cuenta", lambda _usuario: "operador")
+
+    assert TestClient(api.app).get("/api/cuentas").status_code == 403
+    limpiar_autenticacion()
+
+
+def test_administrador_puede_listar_y_crear_cuentas(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+    monkeypatch.setattr(api, "listar_cuentas", lambda: [{
+        "usuario": "operador",
+        "rol": "operador",
+        "creado_en": "2026-10-15T12:00:00",
+    }])
+    creadas = []
+    monkeypatch.setattr(api, "crear_cuenta_administrada", lambda *args: creadas.append(args) or True)
+
+    cliente = TestClient(api.app)
+    listado = cliente.get("/api/cuentas")
+    creada = cliente.post("/api/cuentas", json={"usuario": "nuevo", "contrasena": "contrasena-segura", "rol": "operador"})
+
+    assert listado.status_code == 200
+    assert listado.json()[0]["usuario"] == "operador"
+    assert creada.status_code == 201
+    assert creadas[0][0] == "nuevo"
+    assert creadas[0][2:] == ("operador", "admin")
+    limpiar_autenticacion()
+
+
+def test_crear_cuenta_rechaza_usuario_duplicado_y_contrasena_corta(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+    monkeypatch.setattr(api, "crear_cuenta_administrada", lambda *_args: False)
+    cliente = TestClient(api.app)
+
+    duplicada = cliente.post("/api/cuentas", json={"usuario": "nuevo", "contrasena": "contrasena-segura"})
+    corta = cliente.post("/api/cuentas", json={"usuario": "nuevo", "contrasena": "corta"})
+
+    assert duplicada.status_code == 409
+    assert corta.status_code == 422
+    limpiar_autenticacion()
+
+
+def test_administrador_puede_actualizar_otro_rol_pero_no_el_propio(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+    cambios = []
+    monkeypatch.setattr(api, "actualizar_rol_cuenta", lambda *args: cambios.append(args) or True)
+    cliente = TestClient(api.app)
+
+    actualizada = cliente.patch("/api/cuentas/operador", json={"rol": "administrador"})
+    propia = cliente.patch("/api/cuentas/admin", json={"rol": "operador"})
+
+    assert actualizada.status_code == 200
+    assert cambios == [("operador", "administrador", "admin")]
+    assert propia.status_code == 400
     limpiar_autenticacion()
 
 

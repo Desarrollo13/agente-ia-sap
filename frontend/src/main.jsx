@@ -32,11 +32,16 @@ function App() {
   const [mostrandoAuditoria, setMostrandoAuditoria] = useState(false);
   const [cargandoAuditoria, setCargandoAuditoria] = useState(false);
   const [errorAuditoria, setErrorAuditoria] = useState("");
+  const [cuentas, setCuentas] = useState([]);
+  const [mostrandoCuentas, setMostrandoCuentas] = useState(false);
+  const [cargandoCuentas, setCargandoCuentas] = useState(false);
+  const [errorCuentas, setErrorCuentas] = useState("");
+  const [nuevaCuenta, setNuevaCuenta] = useState({ usuario: "", contrasena: "", rol: "operador" });
 
   function encabezados() { return { Authorization: `Bearer ${sesion.token}` }; }
   function cerrarSesionLocal() {
     localStorage.removeItem("sesion-sap");
-    setSesion(null); setConversacionId(null); setMensajes([]); setConversaciones([]); setAuditoria([]); setMostrandoAuditoria(false);
+    setSesion(null); setConversacionId(null); setMensajes([]); setConversaciones([]); setAuditoria([]); setMostrandoAuditoria(false); setCuentas([]); setMostrandoCuentas(false);
   }
 
   async function abrirConversacion(id) {
@@ -125,8 +130,48 @@ function App() {
 
   function alternarAuditoria() {
     const visible = !mostrandoAuditoria;
-    setMostrandoAuditoria(visible);
+    setMostrandoAuditoria(visible); setMostrandoCuentas(false);
     if (visible) cargarAuditoria();
+  }
+
+  async function cargarCuentas() {
+    setCargandoCuentas(true); setErrorCuentas("");
+    try {
+      const respuesta = await fetch(`${API_URL}/api/cuentas`, { headers: encabezados() });
+      if (respuesta.status === 401) return cerrarSesionLocal();
+      if (!respuesta.ok) throw new Error("No se pudieron cargar las cuentas.");
+      setCuentas(await respuesta.json());
+    } catch (error) { setErrorCuentas(error.message || "No se pudieron cargar las cuentas.");
+    } finally { setCargandoCuentas(false); }
+  }
+
+  function alternarCuentas() {
+    const visible = !mostrandoCuentas;
+    setMostrandoCuentas(visible); setMostrandoAuditoria(false);
+    if (visible) cargarCuentas();
+  }
+
+  async function crearCuenta(evento) {
+    evento.preventDefault(); setErrorCuentas("");
+    try {
+      const respuesta = await fetch(`${API_URL}/api/cuentas`, { method: "POST", headers: { "Content-Type": "application/json", ...encabezados() }, body: JSON.stringify(nuevaCuenta) });
+      if (respuesta.status === 401) return cerrarSesionLocal();
+      const datos = await respuesta.json();
+      if (!respuesta.ok) throw new Error(datos.detail || "No se pudo crear la cuenta.");
+      setNuevaCuenta({ usuario: "", contrasena: "", rol: "operador" });
+      cargarCuentas();
+    } catch (error) { setErrorCuentas(error.message || "No se pudo crear la cuenta."); }
+  }
+
+  async function cambiarRol(usuario, rol) {
+    setErrorCuentas("");
+    try {
+      const respuesta = await fetch(`${API_URL}/api/cuentas/${encodeURIComponent(usuario)}`, { method: "PATCH", headers: { "Content-Type": "application/json", ...encabezados() }, body: JSON.stringify({ rol }) });
+      if (respuesta.status === 401) return cerrarSesionLocal();
+      const datos = await respuesta.json();
+      if (!respuesta.ok) throw new Error(datos.detail || "No se pudo actualizar el rol.");
+      setCuentas((actuales) => actuales.map((cuenta) => cuenta.usuario === usuario ? { ...cuenta, rol: datos.rol } : cuenta));
+    } catch (error) { setErrorCuentas(error.message || "No se pudo actualizar el rol."); }
   }
 
   function nuevaConversacion() {
@@ -165,8 +210,9 @@ function App() {
 
   return <main className="aplicacion">
     <aside className="panel-lateral"><div className="marca"><span>AI</span> SAP Mantenimiento</div><p className="etiqueta">CONSOLA OPERATIVA</p><h1>Consulta el estado de planta.</h1><p className="descripcion">Datos de ordenes, materiales y stock conectados a MySQL.</p><div className={`estado ${estadoServicios?.disponible ? "correcto" : "error"}`}><i /> {estadoServicios ? (estadoServicios.disponible ? "Sistema disponible" : "Servicio no disponible") : "Verificando sistema"}</div><div className="panel-dato"><strong>Fuente</strong><span>MySQL {estadoServicios?.base_datos ? "conectado" : "sin conexion"}</span></div><div className="panel-dato"><strong>Modelo</strong><span>qwen2.5:3b {estadoServicios?.ollama ? "disponible" : "no disponible"}</span></div><section className="historial"><div className="historial-cabecera"><strong>Conversaciones</strong><button onClick={() => cargarConversaciones()}>Actualizar</button></div>{cargandoConversaciones && <p>Cargando historial...</p>}{errorConversaciones && <p className="error-historial">{errorConversaciones}</p>}{!cargandoConversaciones && !errorConversaciones && conversaciones.map((conversacion) => <button className={conversacion.id === conversacionId ? "conversacion activa" : "conversacion"} key={conversacion.id} onClick={() => abrirConversacion(conversacion.id)}><span>{conversacion.titulo}</span><time>{horaDe(conversacion.actualizado_en)}</time></button>)}</section></aside>
-    <section className="chat"><header><div><p className="etiqueta">ASISTENTE · {sesion.usuario} · {sesion.rol ?? "operador"}</p><h2>Centro de consultas</h2></div><div className="acciones-cabecera">{sesion.rol === "administrador" && <button className="nueva-conversacion" onClick={alternarAuditoria}>{mostrandoAuditoria ? "Cerrar auditoria" : "Auditoria"}</button>}<button className="nueva-conversacion" onClick={nuevaConversacion}>Nueva conversacion</button><button className="nueva-conversacion" onClick={cerrarSesion}>Cerrar sesion</button></div></header>
+    <section className="chat"><header><div><p className="etiqueta">ASISTENTE · {sesion.usuario} · {sesion.rol ?? "operador"}</p><h2>Centro de consultas</h2></div><div className="acciones-cabecera">{sesion.rol === "administrador" && <button className="nueva-conversacion" onClick={alternarCuentas}>{mostrandoCuentas ? "Cerrar cuentas" : "Cuentas"}</button>}{sesion.rol === "administrador" && <button className="nueva-conversacion" onClick={alternarAuditoria}>{mostrandoAuditoria ? "Cerrar auditoria" : "Auditoria"}</button>}<button className="nueva-conversacion" onClick={nuevaConversacion}>Nueva conversacion</button><button className="nueva-conversacion" onClick={cerrarSesion}>Cerrar sesion</button></div></header>
       <section className="indicadores"><div><span>Total ordenes</span><strong>{resumen?.total_ordenes ?? "-"}</strong></div><div><span>En espera</span><strong>{resumen?.en_espera_material ?? "-"}</strong></div><div><span>Sin stock</span><strong>{resumen?.materiales_sin_stock ?? "-"}</strong></div><div><span>Prioridad alta</span><strong>{resumen?.orden_mayor_prioridad ?? "-"}</strong></div><button className="actualizar" onClick={() => { cargarResumen(); cargarEstado(); }}>Actualizar</button>{errorResumen && <p>No se pudo actualizar el resumen.</p>}</section>
+      {mostrandoCuentas && <section className="panel-cuentas"><div className="auditoria-cabecera"><div><p className="etiqueta">ADMINISTRACION</p><h3>Gestion de cuentas</h3></div><button className="actualizar" onClick={cargarCuentas} disabled={cargandoCuentas}>Actualizar</button></div><form className="formulario-cuenta" onSubmit={crearCuenta}><input value={nuevaCuenta.usuario} onChange={(evento) => setNuevaCuenta({ ...nuevaCuenta, usuario: evento.target.value })} placeholder="Usuario" required /><input type="password" value={nuevaCuenta.contrasena} onChange={(evento) => setNuevaCuenta({ ...nuevaCuenta, contrasena: evento.target.value })} placeholder="Contrasena (minimo 10 caracteres)" autoComplete="new-password" required /><select value={nuevaCuenta.rol} onChange={(evento) => setNuevaCuenta({ ...nuevaCuenta, rol: evento.target.value })}><option value="operador">Operador</option><option value="administrador">Administrador</option></select><button type="submit">Crear cuenta</button></form>{errorCuentas && <p className="error-auditoria">{errorCuentas}</p>}{cargandoCuentas && <p>Cargando cuentas...</p>}{!cargandoCuentas && !errorCuentas && <div className="tabla-cuentas"><div className="fila-cuenta encabezado-cuenta"><span>Usuario</span><span>Creada</span><span>Rol</span></div>{cuentas.map((cuenta) => <div className="fila-cuenta" key={cuenta.usuario}><span>{cuenta.usuario}</span><time>{fechaHoraDe(cuenta.creado_en)}</time><select value={cuenta.rol} disabled={cuenta.usuario === sesion.usuario} onChange={(evento) => cambiarRol(cuenta.usuario, evento.target.value)}><option value="operador">Operador</option><option value="administrador">Administrador</option></select></div>)}</div>}</section>}
       {mostrandoAuditoria && <section className="panel-auditoria"><div className="auditoria-cabecera"><div><p className="etiqueta">ADMINISTRACION</p><h3>Auditoria reciente</h3></div><button className="actualizar" onClick={cargarAuditoria} disabled={cargandoAuditoria}>Actualizar</button></div>{cargandoAuditoria && <p>Cargando eventos...</p>}{errorAuditoria && <p className="error-auditoria">{errorAuditoria}</p>}{!cargandoAuditoria && !errorAuditoria && <div className="tabla-auditoria"><div className="fila-auditoria encabezado-auditoria"><span>Fecha</span><span>Usuario</span><span>Evento</span><span>Detalle</span></div>{auditoria.length === 0 ? <p>Sin eventos registrados.</p> : auditoria.map((evento, indice) => <div className="fila-auditoria" key={`${evento.creado_en}-${indice}`}><time>{fechaHoraDe(evento.creado_en)}</time><span>{evento.usuario}</span><span>{evento.evento.replaceAll("_", " ")}</span><span>{evento.detalle ?? "-"}</span></div>)}</div>}</section>}
       <div className="mensajes">{mensajes.length === 0 && <p className="sin-mensajes">Inicia una conversacion con una consulta operativa.</p>}{mensajes.map((mensaje, indice) => <article className={`mensaje ${mensaje.tipo}`} key={indice}><span className="rol">{mensaje.tipo === "usuario" ? "Operador" : "Agente"} <time>{mensaje.hora}</time></span><p>{mensaje.contenido}</p>{mensaje.herramientas?.length > 0 && <div className="herramientas">{mensaje.herramientas.map((herramienta) => <span key={herramienta}>{herramienta}</span>)}</div>}</article>)}{cargando && <article className="mensaje asistente"><span className="rol">Agente</span><p className="cargando">Consultando datos operativos</p></article>}</div>
       <div className="consultas-rapidas">{consultasRapidas.map((consulta) => <button key={consulta} onClick={() => setPregunta(consulta)}>{consulta}</button>)}</div><form onSubmit={enviarPregunta}><input value={pregunta} onChange={(evento) => setPregunta(evento.target.value)} placeholder="Escribi una consulta de mantenimiento..." disabled={cargando} /><button type="submit" disabled={cargando}>Enviar</button></form>

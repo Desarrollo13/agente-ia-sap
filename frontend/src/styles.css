@@ -19,3 +19,10 @@ button, input { font: inherit; }
  .fila-auditoria { display: grid; grid-template-columns: 145px 100px 150px minmax(160px, 1fr); gap: 12px; min-width: 620px; padding: 10px 0; border-top: 1px solid #31504d; color: #a9b8b5; font-size: .8rem; }
  .fila-auditoria span:nth-child(3) { color: #e7ebeb; text-transform: capitalize; }
  .encabezado-auditoria { padding-top: 0; border-top: 0; color: #b7e354; font-size: .68rem; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; }
+ .panel-cuentas { margin-top: 18px; padding: 18px; border: 1px solid #31504d; background: #152121; }
+ .formulario-cuenta { display: grid; grid-template-columns: 1fr 1.4fr 130px auto; gap: 8px; margin-top: 18px; }
+ .formulario-cuenta input, .formulario-cuenta select, .fila-cuenta select { min-width: 0; padding: 10px; color: #e7ebeb; background: #1d2e2c; border: 1px solid #4b6a66; border-radius: 4px; }
+ .formulario-cuenta button { padding: 0 14px; }
+ .tabla-cuentas { margin-top: 16px; overflow-x: auto; }
+ .fila-cuenta { display: grid; grid-template-columns: minmax(130px, 1fr) 170px 150px; align-items: center; gap: 12px; min-width: 500px; padding: 10px 0; border-top: 1px solid #31504d; color: #a9b8b5; font-size: .8rem; }
+ .encabezado-cuenta { padding-top: 0; border-top: 0; color: #b7e354; font-size: .68rem; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; }

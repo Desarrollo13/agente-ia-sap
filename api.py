@@ -22,19 +22,22 @@ from tools import (
     obtener_mensajes_conversacion,
     obtener_rol_cuenta,
     obtener_usuario_por_sesion,
+    listar_cuentas,
+    crear_cuenta_administrada,
+    actualizar_rol_cuenta,
     registrar_evento,
     listar_auditoria,
     contar_intentos_login,
     registrar_intento_login,
 )
-from seguridad import generar_token, resumir_token
+from seguridad import cifrar_contrasena, generar_token, resumir_token, validar_contrasena, validar_usuario
 
 
 app = FastAPI(title="Agente IA SAP", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Content-Type", "Authorization"],
 )
 esquema_bearer = HTTPBearer(auto_error=False)
@@ -89,6 +92,22 @@ class EventoAuditoria(BaseModel):
     evento: str
     detalle: str | None
     creado_en: datetime
+
+
+class Cuenta(BaseModel):
+    usuario: str
+    rol: Literal["operador", "administrador"]
+    creado_en: datetime
+
+
+class NuevaCuenta(BaseModel):
+    usuario: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_.-]+$")
+    contrasena: str = Field(min_length=1, max_length=200)
+    rol: Literal["operador", "administrador"] = "operador"
+
+
+class CambioRol(BaseModel):
+    rol: Literal["operador", "administrador"]
 
 
 def obtener_usuario_actual(
@@ -189,6 +208,49 @@ def consultar_auditoria(_usuario: str = Depends(requiere_administrador)):
         return listar_auditoria()
     except ErrorConsultaBaseDatos as error:
         raise HTTPException(status_code=503, detail="No se pudo consultar la auditoria.") from error
+
+
+@app.get("/api/cuentas", response_model=list[Cuenta])
+def consultar_cuentas(_usuario: str = Depends(requiere_administrador)):
+    try:
+        return listar_cuentas()
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudieron consultar las cuentas.") from error
+
+
+@app.post("/api/cuentas", response_model=Cuenta, status_code=status.HTTP_201_CREATED)
+def crear_cuenta(cuenta: NuevaCuenta, administrador: str = Depends(requiere_administrador)):
+    error_contrasena = validar_contrasena(cuenta.contrasena)
+    if error_contrasena:
+        raise HTTPException(status_code=422, detail=error_contrasena)
+    try:
+        creada = crear_cuenta_administrada(
+            cuenta.usuario,
+            cifrar_contrasena(cuenta.contrasena),
+            cuenta.rol,
+            administrador,
+        )
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo crear la cuenta.") from error
+    if not creada:
+        raise HTTPException(status_code=409, detail="El usuario ya existe.")
+    return {"usuario": cuenta.usuario, "rol": cuenta.rol, "creado_en": datetime.now()}
+
+
+@app.patch("/api/cuentas/{usuario}", response_model=Cuenta)
+def cambiar_rol_cuenta(usuario: str, cambio: CambioRol, administrador: str = Depends(requiere_administrador)):
+    error_usuario = validar_usuario(usuario)
+    if error_usuario:
+        raise HTTPException(status_code=422, detail=error_usuario)
+    if usuario == administrador:
+        raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol.")
+    try:
+        actualizada = actualizar_rol_cuenta(usuario, cambio.rol, administrador)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo actualizar el rol.") from error
+    if not actualizada:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada.")
+    return {"usuario": usuario, "rol": cambio.rol, "creado_en": datetime.now()}
 
 
 @app.post("/api/chat", response_model=RespuestaChat)

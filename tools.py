@@ -1,5 +1,5 @@
 from database import obtener_conexion
-from mysql.connector import Error as MySQLError
+from mysql.connector import Error as MySQLError, IntegrityError
 from seguridad import verificar_contrasena
 
 
@@ -104,6 +104,70 @@ def obtener_rol_cuenta(usuario):
         "SELECT rol FROM cuentas WHERE usuario = %s", (usuario,), una_fila=True
     )
     return cuenta["rol"] if cuenta else None
+
+
+def listar_cuentas():
+    return _ejecutar_consulta(
+        "SELECT usuario, rol, creado_en FROM cuentas ORDER BY usuario"
+    )
+
+
+def crear_cuenta_administrada(usuario, contrasena_cifrada, rol, administrador):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "INSERT INTO cuentas (usuario, contrasena_cifrada, rol) VALUES (%s, %s, %s)",
+            (usuario, contrasena_cifrada, rol),
+        )
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (administrador, "cuenta_creada", f"{usuario} ({rol})"),
+        )
+        conexion.commit()
+        return True
+    except IntegrityError:
+        if conexion is not None:
+            conexion.rollback()
+        return False
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
+
+
+def actualizar_rol_cuenta(usuario, rol, administrador):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute("UPDATE cuentas SET rol = %s WHERE usuario = %s", (rol, usuario))
+        if cursor.rowcount == 0:
+            conexion.rollback()
+            return False
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (administrador, "rol_cuenta_actualizado", f"{usuario} ({rol})"),
+        )
+        conexion.commit()
+        return True
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
 
 
 def registrar_evento(usuario, evento, detalle=None):

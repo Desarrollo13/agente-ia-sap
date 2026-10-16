@@ -112,8 +112,7 @@ def test_consultar_estado_verifica_base_y_modelo(monkeypatch):
 
 
 def test_login_crea_una_sesion(monkeypatch):
-    monkeypatch.setattr(api, "autenticar_cuenta", lambda *_args: True)
-    monkeypatch.setattr(api, "obtener_rol_cuenta", lambda _usuario: "administrador")
+    monkeypatch.setattr(api, "intentar_inicio_sesion", lambda *_args: "administrador")
     sesiones = []
     monkeypatch.setattr(api, "crear_sesion", lambda usuario, token: sesiones.append((usuario, token)))
 
@@ -128,13 +127,13 @@ def test_login_crea_una_sesion(monkeypatch):
 
 
 def test_login_rechaza_credenciales_incorrectas(monkeypatch):
-    monkeypatch.setattr(api, "autenticar_cuenta", lambda *_args: False)
+    monkeypatch.setattr(api, "intentar_inicio_sesion", lambda *_args: False)
     respuesta = TestClient(api.app).post("/api/login", json={"usuario": "admin", "contrasena": "error"})
     assert respuesta.status_code == 401
 
 
 def test_login_bloquea_despues_de_cinco_intentos(monkeypatch):
-    monkeypatch.setattr(api, "contar_intentos_login", lambda *_args: 5)
+    monkeypatch.setattr(api, "intentar_inicio_sesion", lambda *_args: None)
 
     respuesta = TestClient(api.app).post("/api/login", json={"usuario": "admin", "contrasena": "error"})
 
@@ -247,6 +246,16 @@ def test_administrador_puede_actualizar_otro_rol_pero_no_el_propio(monkeypatch):
     assert actualizada.status_code == 200
     assert cambios == [("operador", "administrador", "admin")]
     assert propia.status_code == 400
+    limpiar_autenticacion()
+
+
+def test_no_permite_dejar_sin_administradores(monkeypatch):
+    api.app.dependency_overrides[api.requiere_administrador] = lambda: "admin"
+    monkeypatch.setattr(api, "actualizar_rol_cuenta", lambda *_args: None)
+
+    respuesta = TestClient(api.app).patch("/api/cuentas/otro-admin", json={"rol": "operador"})
+
+    assert respuesta.status_code == 409
     limpiar_autenticacion()
 
 

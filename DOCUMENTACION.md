@@ -89,6 +89,11 @@ agente.
 7. La pregunta y la respuesta se guardan juntas en una transaccion, se
    actualiza la conversacion y se registra el evento de auditoria.
 
+La interfaz invalida una apertura anterior al elegir otra conversacion y
+cancela el chat pendiente al cambiar de conversacion, crear una nueva o cerrar
+sesion. Las consultas de chat que superan 60 segundos muestran un error
+recuperable para poder reintentarlas.
+
 El historial visual no depende de `localStorage`: al abrir una conversacion,
 React solicita hasta 100 mensajes a MySQL con rol, contenido y fecha.
 
@@ -205,6 +210,8 @@ Abrir la URL que muestre Vite, normalmente `http://127.0.0.1:5173`.
 
 - La suite se ejecuta con `./venv/Scripts/python.exe -m pytest -q` y usa la
   base MySQL local configurada en `.env`.
+- Las pruebas de interfaz se ejecutan con `npm.cmd test` dentro de `frontend/`
+  y simulan las respuestas HTTP de la API.
 - El frontend se valida con `npm.cmd run build` dentro de `frontend/`.
 - El proyecto usa datos simulados y Ollama local. No debe presentarse como una
   integracion con SAP productivo.

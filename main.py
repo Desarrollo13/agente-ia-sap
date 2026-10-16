@@ -1,4 +1,4 @@
-from ollama import chat
+from ollama import Client
 
 import routing
 from tools import (
@@ -16,6 +16,7 @@ from tools import (
 
 
 MODELO = "qwen2.5:3b"
+chat = Client(timeout=60).chat
 
 TOOLS = [
     {"type": "function", "function": {"name": "consultar_orden", "description": "Consulta estado, prioridad y descripcion de una orden SAP.", "parameters": {"type": "object", "properties": {"numero_orden": {"type": "string"}}, "required": ["numero_orden"]}}},
@@ -46,6 +47,26 @@ Responde en forma clara y breve sin mencionar nombres internos de herramientas.
 
 
 def ejecutar_herramienta(nombre, argumentos):
+    argumentos_requeridos = {
+        "consultar_orden": {"numero_orden"},
+        "consultar_usuario": {"legajo"},
+        "consultar_stock": {"material"},
+        "buscar_ordenes": set(),
+        "analizar_ordenes": set(),
+        "buscar_materiales_sin_stock": set(),
+        "buscar_ordenes_con_material_sin_stock": set(),
+        "analizar_ordenes_esperando_material": set(),
+        "analizar_prioridad_ordenes_esperando_material": {"tipo"},
+    }
+    if nombre not in argumentos_requeridos:
+        return "Herramienta no reconocida."
+    if not isinstance(argumentos, dict):
+        return "Los argumentos de la herramienta no son validos."
+    faltantes = argumentos_requeridos[nombre] - argumentos.keys()
+    if faltantes:
+        return f"Falta el argumento obligatorio: {next(iter(faltantes))}."
+    if any(not isinstance(valor, str) or not valor.strip() for valor in argumentos.values()):
+        return "Los argumentos de la herramienta no son validos."
     ejecutores = {
         "consultar_orden": lambda: consultar_orden(argumentos["numero_orden"]),
         "consultar_usuario": lambda: consultar_usuario(argumentos["legajo"]),
@@ -62,8 +83,6 @@ def ejecutar_herramienta(nombre, argumentos):
         ),
     }
     ejecutor = ejecutores.get(nombre)
-    if ejecutor is None:
-        return "Herramienta no reconocida."
     try:
         return ejecutor()
     except KeyError as error:
@@ -215,14 +234,24 @@ def procesar_pregunta(pregunta, historial=None):
     respuesta = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
     if respuesta is None:
         return {"respuesta": "No se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.", "herramientas_usadas": [], "resultados": []}
-    if not respuesta.message.tool_calls:
-        return {"respuesta": respuesta.message.content, "herramientas_usadas": [], "resultados": []}
+    mensaje = getattr(respuesta, "message", None)
+    if mensaje is None:
+        return {"respuesta": "Ollama devolvio una respuesta no valida.", "herramientas_usadas": [], "resultados": []}
+    tool_calls = getattr(mensaje, "tool_calls", None)
+    if not tool_calls:
+        contenido = getattr(mensaje, "content", None)
+        if not isinstance(contenido, str):
+            return {"respuesta": "Ollama devolvio una respuesta no valida.", "herramientas_usadas": [], "resultados": []}
+        return {"respuesta": contenido, "herramientas_usadas": [], "resultados": []}
 
-    messages.append(respuesta.message)
+    messages.append(mensaje)
     resultados_tools = []
-    for tool_call in respuesta.message.tool_calls:
-        nombre = tool_call.function.name
-        argumentos = tool_call.function.arguments
+    for tool_call in tool_calls:
+        funcion = getattr(tool_call, "function", None)
+        nombre = getattr(funcion, "name", None)
+        argumentos = getattr(funcion, "arguments", None)
+        if not isinstance(nombre, str):
+            return {"respuesta": "Ollama solicito una herramienta no valida.", "herramientas_usadas": [], "resultados": []}
         resultado = ejecutar_herramienta(nombre, argumentos)
         resultados_tools.append((nombre, argumentos, resultado))
         messages.append({"role": "tool", "tool_name": nombre, "content": str(resultado)})
@@ -240,8 +269,11 @@ def procesar_pregunta(pregunta, historial=None):
     respuesta_final = ejecutar_chat(model=MODELO, messages=messages, tools=TOOLS)
     if respuesta_final is None:
         return {"respuesta": "No se pudo conectar con Ollama. Verifica que este iniciado y que el modelo este instalado.", "herramientas_usadas": [nombre for nombre, _, _ in resultados_tools], "resultados": resultados_tools}
+    contenido_final = getattr(getattr(respuesta_final, "message", None), "content", None)
+    if not isinstance(contenido_final, str):
+        contenido_final = "Ollama devolvio una respuesta no valida."
     return {
-        "respuesta": respuesta_final.message.content,
+        "respuesta": contenido_final,
         "herramientas_usadas": [nombre for nombre, _, _ in resultados_tools],
         "resultados": resultados_tools,
     }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
@@ -13,7 +13,7 @@ function fechaHoraDe(fecha) {
   return new Date(fecha).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
 }
 
-function App() {
+export function App() {
   const [sesion, setSesion] = useState(() => { try { return JSON.parse(localStorage.getItem("sesion-sap")); } catch { return null; } });
   const [usuario, setUsuario] = useState("");
   const [contrasena, setContrasena] = useState("");
@@ -37,20 +37,35 @@ function App() {
   const [cargandoCuentas, setCargandoCuentas] = useState(false);
   const [errorCuentas, setErrorCuentas] = useState("");
   const [nuevaCuenta, setNuevaCuenta] = useState({ usuario: "", contrasena: "", rol: "operador" });
+  const solicitudConversacion = useRef(0);
+  const solicitudChat = useRef(0);
+  const controladorChat = useRef(null);
 
   function encabezados() { return { Authorization: `Bearer ${sesion.token}` }; }
+  function cancelarChatPendiente() {
+    solicitudChat.current += 1;
+    controladorChat.current?.abort();
+    controladorChat.current = null;
+    setCargando(false);
+  }
   function cerrarSesionLocal() {
+    solicitudConversacion.current += 1;
+    cancelarChatPendiente();
     localStorage.removeItem("sesion-sap");
     setSesion(null); setConversacionId(null); setMensajes([]); setConversaciones([]); setAuditoria([]); setMostrandoAuditoria(false); setCuentas([]); setMostrandoCuentas(false);
   }
 
   async function abrirConversacion(id) {
+    const idSolicitud = ++solicitudConversacion.current;
+    cancelarChatPendiente();
     setErrorConversaciones("");
     try {
       const respuesta = await fetch(`${API_URL}/api/conversaciones/${id}`, { headers: encabezados() });
+      if (idSolicitud !== solicitudConversacion.current) return;
       if (respuesta.status === 401) return cerrarSesionLocal();
       if (!respuesta.ok) throw new Error("No se pudo abrir la conversacion.");
       const datos = await respuesta.json();
+      if (idSolicitud !== solicitudConversacion.current) return;
       setConversacionId(datos.id);
       localStorage.setItem(`conversacion-sap-${sesion.usuario}`, String(datos.id));
       setMensajes(datos.mensajes.map((mensaje) => ({
@@ -59,7 +74,7 @@ function App() {
         herramientas: [],
         hora: horaDe(mensaje.creado_en),
       })));
-    } catch (error) { setErrorConversaciones(error.message || "No se pudo abrir la conversacion."); }
+    } catch (error) { if (idSolicitud === solicitudConversacion.current) setErrorConversaciones(error.message || "No se pudo abrir la conversacion."); }
   }
 
   async function cargarConversaciones(abrirActiva = false) {
@@ -175,6 +190,8 @@ function App() {
   }
 
   function nuevaConversacion() {
+    solicitudConversacion.current += 1;
+    cancelarChatPendiente();
     localStorage.removeItem(`conversacion-sap-${sesion.usuario}`);
     setConversacionId(null); setMensajes([]); setErrorConversaciones("");
   }
@@ -183,22 +200,37 @@ function App() {
     evento.preventDefault();
     const consulta = pregunta.trim();
     if (!consulta || cargando) return;
+    const idSolicitud = ++solicitudChat.current;
+    const conversacionSolicitada = conversacionId;
+    const controlador = new AbortController();
+    controladorChat.current = controlador;
+    let tiempoAgotado = false;
+    const timeout = window.setTimeout(() => { tiempoAgotado = true; controlador.abort(); }, 60000);
     const hora = horaDe(new Date());
     setMensajes((actuales) => [...actuales, { tipo: "usuario", contenido: consulta, hora }]);
     setPregunta(""); setCargando(true);
     try {
-      const respuesta = await fetch(`${API_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json", ...encabezados() }, body: JSON.stringify({ pregunta: consulta, conversacion_id: conversacionId }) });
+      const respuesta = await fetch(`${API_URL}/api/chat`, { method: "POST", headers: { "Content-Type": "application/json", ...encabezados() }, body: JSON.stringify({ pregunta: consulta, conversacion_id: conversacionSolicitada }), signal: controlador.signal });
+      if (idSolicitud !== solicitudChat.current) return;
       if (respuesta.status === 401) { cerrarSesionLocal(); return; }
       if (!respuesta.ok) throw new Error("La API no pudo procesar la consulta.");
       const datos = await respuesta.json();
+      if (idSolicitud !== solicitudChat.current) return;
       setConversacionId(datos.conversacion_id);
       localStorage.setItem(`conversacion-sap-${sesion.usuario}`, String(datos.conversacion_id));
       setMensajes((actuales) => [...actuales, { tipo: "asistente", contenido: datos.respuesta, herramientas: datos.herramientas_usadas, hora: horaDe(new Date()) }]);
       cargarConversaciones();
     } catch (error) {
-      const contenido = error instanceof TypeError ? "No se pudo conectar con la API." : error.message;
-      setMensajes((actuales) => [...actuales, { tipo: "error", contenido: `${contenido} Verifica que FastAPI este ejecutandose en ${API_URL}.`, herramientas: [], hora: horaDe(new Date()) }]);
-    } finally { setCargando(false); }
+      if (idSolicitud !== solicitudChat.current || error.name === "AbortError" && !tiempoAgotado) return;
+      const contenido = tiempoAgotado ? "La consulta tardo demasiado. Intenta nuevamente." : error instanceof TypeError ? "No se pudo conectar con la API." : error.message;
+      setMensajes((actuales) => [...actuales, { tipo: "error", contenido: tiempoAgotado ? contenido : `${contenido} Verifica que FastAPI este ejecutandose en ${API_URL}.`, herramientas: [], hora: horaDe(new Date()) }]);
+    } finally {
+      window.clearTimeout(timeout);
+      if (idSolicitud === solicitudChat.current) {
+        controladorChat.current = null;
+        setCargando(false);
+      }
+    }
   }
 
   if (!sesion) return <main className="acceso"><form className="formulario-acceso" onSubmit={iniciarSesion}>
@@ -220,4 +252,5 @@ function App() {
   </main>;
 }
 
-createRoot(document.getElementById("root")).render(<App />);
+const raiz = document.getElementById("root");
+if (raiz) createRoot(raiz).render(<App />);

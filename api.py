@@ -29,11 +29,13 @@ from tools import (
     listar_auditoria,
     contar_intentos_login,
     registrar_intento_login,
+    intentar_inicio_sesion,
 )
 from seguridad import cifrar_contrasena, generar_token, resumir_token, validar_contrasena, validar_usuario
 
 
 app = FastAPI(title="Agente IA SAP", version="1.0.0")
+MAXIMO_RESPUESTA_CHAT_BYTES = 60000
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -159,18 +161,17 @@ class EstadoServicios(BaseModel):
 def iniciar_sesion(credenciales: Credenciales, request: Request):
     direccion_ip = request.client.host if request.client else "desconocida"
     try:
-        if contar_intentos_login(credenciales.usuario, direccion_ip) >= 5:
+        resultado_login = intentar_inicio_sesion(credenciales.usuario, credenciales.contrasena, direccion_ip)
+        if resultado_login is None:
             raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta nuevamente en 15 minutos.")
-        autenticada = autenticar_cuenta(credenciales.usuario, credenciales.contrasena)
-        registrar_intento_login(credenciales.usuario, direccion_ip, autenticada)
     except ErrorConsultaBaseDatos as error:
         raise HTTPException(status_code=503, detail="No se pudo iniciar sesion.") from error
-    if not autenticada:
+    if not resultado_login:
         raise HTTPException(status_code=401, detail="Usuario o contrasena incorrectos.")
     token = generar_token()
     try:
         crear_sesion(credenciales.usuario, resumir_token(token))
-        rol = obtener_rol_cuenta(credenciales.usuario)
+        rol = resultado_login
         registrar_evento_sin_bloquear(credenciales.usuario, "inicio_sesion")
     except ErrorConsultaBaseDatos as error:
         raise HTTPException(status_code=503, detail="No se pudo iniciar sesion.") from error
@@ -248,6 +249,8 @@ def cambiar_rol_cuenta(usuario: str, cambio: CambioRol, administrador: str = Dep
         actualizada = actualizar_rol_cuenta(usuario, cambio.rol, administrador)
     except ErrorConsultaBaseDatos as error:
         raise HTTPException(status_code=503, detail="No se pudo actualizar el rol.") from error
+    if actualizada is None:
+        raise HTTPException(status_code=409, detail="Debe existir al menos un administrador.")
     if not actualizada:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada.")
     return {"usuario": usuario, "rol": cambio.rol, "creado_en": datetime.now()}
@@ -266,16 +269,17 @@ def consultar_chat(consulta: ConsultaChat, usuario: str = Depends(obtener_usuari
         consulta.pregunta,
         historial,
     )
+    respuesta_agente = resultado["respuesta"].encode("utf-8")[:MAXIMO_RESPUESTA_CHAT_BYTES].decode("utf-8", "ignore")
     try:
         guardada = guardar_interaccion_chat(
-            conversacion_id, usuario, consulta.pregunta, resultado["respuesta"]
+            conversacion_id, usuario, consulta.pregunta, respuesta_agente
         )
     except ErrorConsultaBaseDatos as error:
         raise HTTPException(status_code=503, detail="No se pudo guardar la conversacion.") from error
     if not guardada:
         raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
     return {
-        "respuesta": resultado["respuesta"],
+        "respuesta": respuesta_agente,
         "herramientas_usadas": resultado["herramientas_usadas"],
         "conversacion_id": conversacion_id,
     }

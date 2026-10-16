@@ -117,6 +117,10 @@ def test_ejecutar_herramienta_informa_error_de_base_de_datos(monkeypatch):
     assert resultado == "No se pudo consultar la base de datos."
 
 
+def test_ejecutar_herramienta_rechaza_argumentos_malformados():
+    assert main.ejecutar_herramienta("consultar_stock", ["MAT-003"]) == "Los argumentos de la herramienta no son validos."
+
+
 def test_ejecutar_chat_devuelve_none_si_ollama_falla(monkeypatch):
     def fallar(**_argumentos):
         raise ConnectionError

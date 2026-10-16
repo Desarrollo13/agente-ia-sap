@@ -99,6 +99,45 @@ def registrar_intento_login(usuario, direccion_ip, exitoso):
     )
 
 
+def intentar_inicio_sesion(usuario, contrasena, direccion_ip):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT GET_LOCK(%s, 5) AS bloqueado", (f"login:{usuario}:{direccion_ip}",))
+        if cursor.fetchone()["bloqueado"] != 1:
+            raise ErrorConsultaBaseDatos()
+        cursor.execute(
+            """SELECT COUNT(*) AS total FROM intentos_login
+               WHERE usuario = %s AND direccion_ip = %s AND exitoso = FALSE
+               AND creado_en > DATE_SUB(UTC_TIMESTAMP(), INTERVAL 15 MINUTE)""",
+            (usuario, direccion_ip),
+        )
+        if cursor.fetchone()["total"] >= 5:
+            return None
+        cursor.execute("SELECT contrasena_cifrada, rol FROM cuentas WHERE usuario = %s", (usuario,))
+        cuenta = cursor.fetchone()
+        autenticada = cuenta is not None and verificar_contrasena(contrasena, cuenta["contrasena_cifrada"])
+        cursor.execute("INSERT INTO intentos_login (usuario, direccion_ip, exitoso) VALUES (%s, %s, %s)", (usuario, direccion_ip, autenticada))
+        conexion.commit()
+        return cuenta["rol"] if autenticada else False
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            try:
+                cursor.execute("SELECT RELEASE_LOCK(%s)", (f"login:{usuario}:{direccion_ip}",))
+                cursor.fetchone()
+            except MySQLError:
+                pass
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
+
+
 def obtener_rol_cuenta(usuario):
     cuenta = _ejecutar_consulta(
         "SELECT rol FROM cuentas WHERE usuario = %s", (usuario,), una_fila=True
@@ -148,7 +187,13 @@ def actualizar_rol_cuenta(usuario, rol, administrador):
     cursor = None
     try:
         conexion = obtener_conexion()
-        cursor = conexion.cursor()
+        cursor = conexion.cursor(dictionary=True)
+        if rol != "administrador":
+            cursor.execute("SELECT usuario FROM cuentas WHERE rol = 'administrador' FOR UPDATE")
+            administradores = cursor.fetchall()
+            if any(cuenta["usuario"] == usuario for cuenta in administradores) and len(administradores) == 1:
+                conexion.rollback()
+                return None
         cursor.execute("UPDATE cuentas SET rol = %s WHERE usuario = %s", (rol, usuario))
         if cursor.rowcount == 0:
             conexion.rollback()
@@ -361,7 +406,7 @@ def analizar_ordenes():
         """,
         una_fila=True,
     )
-    return {clave: int(valor) for clave, valor in resultado.items()}
+    return {clave: int(valor or 0) for clave, valor in resultado.items()}
 
 
 def buscar_materiales_sin_stock():

@@ -1,8 +1,41 @@
 # Agente IA SAP
 
-Agente conversacional en Python para consultar ordenes de mantenimiento SAP,
-usuarios, materiales y stock mediante lenguaje natural. Usa Ollama para
-interpretar preguntas y MySQL como fuente de datos.
+Demo web de un asistente para mantenimiento de planta. Permite consultar datos
+SAP simulados mediante lenguaje natural, analizar el riesgo de equipos y
+gestionar alertas operativas. Usa Ollama para interpretar consultas y MySQL
+como fuente de datos.
+
+> El proyecto no se conecta a un sistema SAP productivo. MySQL contiene datos
+> locales de demostracion.
+
+## Estado Del Proyecto
+
+La aplicacion esta terminada como demo funcional y contiene una interfaz React,
+API FastAPI, autenticacion, base de datos y agente de IA local. El flujo
+principal se ejecuta en Windows con XAMPP/MySQL y Ollama.
+
+## Funcionalidades
+
+- Chat con Ollama (`qwen2.5:3b`) y herramientas deterministas para consultar
+  ordenes, materiales, stock y usuarios.
+- Resumen operativo con totales de ordenes, materiales sin stock y prioridad.
+- Historial persistente de conversaciones por usuario, con creacion y borrado.
+- Cuentas con roles `operador` y `administrador`, sesiones Bearer de ocho horas
+  y bloqueo temporal despues de intentos de acceso fallidos.
+- Auditoria de acciones administrativas y operativas.
+- Historial de equipos SAP PM, avisos de falla y puntaje de riesgo explicable.
+- Alertas de mantenimiento para equipos de riesgo alto, con seguimiento hasta
+  su atencion.
+- Base documental tecnica con busqueda RAG de texto completo y administracion
+  de documentos para administradores.
+- Interfaz responsive, accesible por teclado y protegida ante respuestas HTTP
+  obsoletas o consultas de chat agotadas.
+
+## Tecnologias
+
+- Python 3.12, FastAPI y MySQL.
+- React 19, Vite y Vitest.
+- Ollama con el modelo local `qwen2.5:3b`.
 
 La guia completa de arquitectura, seguridad, roles y flujos de uso esta en
 [`DOCUMENTACION.md`](DOCUMENTACION.md).
@@ -52,9 +85,16 @@ mysql -u root -p agente_ia_sap < database/seed.sql
 ejemplo sin duplicarlos. Ajustar `agente_ia_sap` en los comandos si `DB_NAME`
 tiene otro valor.
 
-Para habilitar el acceso, ejecutar tambien las migraciones en orden:
-`001_agrega_cuentas.sql`, `002_agrega_roles_y_auditoria.sql` y
-`003_refuerza_seguridad.sql`. Luego crear la cuenta inicial:
+Para habilitar las funciones de acceso, equipos, alertas y RAG, ejecutar las
+migraciones en orden. En PowerShell:
+
+```powershell
+Get-ChildItem database\migrations\*.sql | Sort-Object Name | ForEach-Object {
+    Get-Content $_ | mysql -u root -p agente_ia_sap
+}
+```
+
+Luego crear la cuenta inicial:
 
 ```powershell
 .\venv\Scripts\python.exe crear_cuenta.py admin
@@ -136,3 +176,23 @@ los archivos de produccion usar `npm.cmd run build`.
 
 Las pruebas usan la base MySQL configurada en `.env` y esperan los datos SAP de
 ejemplo incluidos en sus aserciones.
+
+Para las pruebas y el build del frontend:
+
+```powershell
+cd frontend
+npm.cmd test
+npm.cmd run build
+```
+
+## Estructura
+
+- `api.py`: API REST, sesiones, permisos y contratos HTTP.
+- `main.py`: orquestacion del agente Ollama y sus herramientas.
+- `tools.py`: consultas, transacciones y logica de negocio MySQL.
+- `frontend/`: interfaz React.
+- `database/`: esquema, datos de demostracion y migraciones SQL.
+- `tests/`: pruebas de API, seguridad, consultas y reglas operativas.
+
+La arquitectura, endpoints, permisos y limites conocidos se documentan en
+[`DOCUMENTACION.md`](DOCUMENTACION.md).

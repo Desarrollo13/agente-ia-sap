@@ -43,7 +43,7 @@ FastAPI (api.py)
 tools.py
         v
 MySQL
-  Datos SAP simulados: ordenes, usuarios, materiales, orden_materiales
+   Datos SAP simulados: equipos, ordenes, avisos_falla, usuarios, materiales, orden_materiales
   Aplicacion: cuentas, sesiones, conversaciones, mensajes_conversacion,
               auditoria, intentos_login
 ```
@@ -73,6 +73,37 @@ Esto permite consultas como:
 La separacion entre "materiales sin stock" y "ordenes que requieren un
 material sin stock" es intencional y se conserva en las herramientas del
 agente.
+
+## Equipos Y Avisos
+
+La primera etapa de diagnostico agrega equipos SAP PM y avisos de falla. Cada
+orden puede estar asociada a un equipo y cada aviso registra sintoma, modo de
+falla y causa. El agente puede recuperar el historial tecnico de un equipo para
+identificar antecedentes; no presenta esas observaciones como una prediccion
+confirmada.
+
+El analisis de riesgo asigna un puntaje operativo de 0 a 100: criticidad del
+equipo (10 a 30 puntos), avisos activos (hasta 40), prioridad de OM en curso
+(10 o 20) y modo de falla repetido (15). El nivel es `Bajo` bajo 40, `Medio`
+entre 40 y 69 y `Alto` desde 70. Es una regla explicable para priorizacion; no
+es un modelo predictivo estadistico.
+
+Las alertas internas se generan bajo demanda solo si el riesgo es `Alto`. Cada
+alerta pendiente es unica por equipo; un operador puede marcarla como atendida.
+La creacion y atencion se registran en auditoria. Este flujo sera la base para
+notificaciones automaticas y email en una etapa posterior.
+
+## RAG Tecnico
+
+El RAG recupera procedimientos desde documentos tecnicos locales almacenados en
+MySQL mediante un indice de texto completo. Entrega titulo, contenido y fuente.
+El agente debe usar esos pasajes como contexto y citar la fuente; no sustituye
+las validaciones de seguridad del procedimiento original.
+
+Los administradores pueden incorporar documentos de texto desde la interfaz
+`Documentos`. Cada alta se audita y queda disponible de inmediato en las
+consultas RAG. La carga y extraccion automatica de archivos PDF no forma parte
+de esta primera version.
 
 ## Flujo De Una Consulta
 
@@ -126,6 +157,8 @@ las cuentas posteriores se pueden crear desde la interfaz de administrador.
 | Listar cuentas | No | Si |
 | Crear operadores o administradores | No | Si |
 | Cambiar el rol de otra cuenta | No | Si |
+| Restablecer la contrasena de otra cuenta | No | Si |
+| Incorporar documentos tecnicos RAG | No | Si |
 
 Los permisos se verifican en FastAPI, no solamente ocultando botones en React.
 Un administrador no puede cambiar su propio rol desde la API ni la interfaz.
@@ -161,6 +194,9 @@ Un administrador no puede cambiar su propio rol desde la API ni la interfaz.
    la conversacion vuelve a actualizarse.
 4. `Nueva conversacion` solo elimina el ID activo local; crea el registro en
    MySQL al enviar la primera pregunta.
+5. El usuario puede eliminar una conversacion propia desde el encabezado. Se
+   eliminan tambien sus mensajes asociados y queda registrado el evento de
+   auditoria.
 
 ## API Principal
 
@@ -174,12 +210,22 @@ Todos los endpoints excepto `POST /api/login` requieren `Authorization: Bearer
 | `POST /api/chat` | Autenticado | Consulta el agente y persiste el intercambio. |
 | `GET /api/resumen` | Autenticado | Devuelve indicadores operativos. |
 | `GET /api/estado` | Autenticado | Comprueba MySQL y Ollama. |
+| `GET /api/equipos/{equipo}/historial` | Autenticado | Devuelve datos, ordenes y avisos recientes de un equipo. |
+| `GET /api/equipos/{equipo}/riesgo` | Autenticado | Calcula el riesgo operativo explicable de un equipo. |
+| `POST /api/equipos/{equipo}/alertas` | Autenticado | Crea una alerta si el riesgo actual es alto. |
+| `GET /api/alertas` | Autenticado | Lista alertas de riesgo pendientes. |
+| `PATCH /api/alertas/{id}` | Autenticado | Marca una alerta pendiente como atendida. |
+| `GET /api/conocimiento/buscar?q=` | Autenticado | Busca procedimientos tecnicos y devuelve sus fuentes. |
+| `GET /api/documentos-tecnicos` | Administrador | Lista los documentos disponibles para RAG. |
+| `POST /api/documentos-tecnicos` | Administrador | Incorpora un documento tecnico de texto al RAG. |
 | `GET /api/conversaciones` | Autenticado | Lista las conversaciones propias. |
 | `GET /api/conversaciones/{id}` | Autenticado | Devuelve mensajes de una conversacion propia. |
+| `DELETE /api/conversaciones/{id}` | Autenticado | Elimina una conversacion propia y sus mensajes. |
 | `GET /api/auditoria` | Administrador | Lista eventos recientes. |
 | `GET /api/cuentas` | Administrador | Lista usuarios y roles. |
 | `POST /api/cuentas` | Administrador | Crea una cuenta. |
 | `PATCH /api/cuentas/{usuario}` | Administrador | Cambia el rol de otra cuenta. |
+| `PATCH /api/cuentas/{usuario}/contrasena` | Administrador | Restablece la contrasena de otra cuenta y revoca sus sesiones. |
 
 La documentacion interactiva de FastAPI esta disponible en
 `http://127.0.0.1:8000/docs` durante el desarrollo.
@@ -190,7 +236,9 @@ La documentacion interactiva de FastAPI esta disponible en
 2. Crear la base de datos y ejecutar `database/schema.sql` y
    `database/seed.sql`.
 3. Ejecutar en orden las migraciones `001_agrega_cuentas.sql`,
-   `002_agrega_roles_y_auditoria.sql` y `003_refuerza_seguridad.sql`.
+   `002_agrega_roles_y_auditoria.sql`, `003_refuerza_seguridad.sql` y
+   `004_agrega_equipos_y_avisos.sql`, `005_agrega_alertas_mantenimiento.sql` y
+    `006_agrega_documentos_tecnicos.sql` y `007_indice_busqueda_documentos.sql`.
 4. Crear la primera cuenta con:
 
 ```powershell
@@ -215,5 +263,5 @@ Abrir la URL que muestre Vite, normalmente `http://127.0.0.1:5173`.
 - El frontend se valida con `npm.cmd run build` dentro de `frontend/`.
 - El proyecto usa datos simulados y Ollama local. No debe presentarse como una
   integracion con SAP productivo.
-- No hay borrado de conversaciones ni administracion de contrasenas desde la
-  interfaz por el momento.
+- Un administrador puede restablecer la contrasena de otra cuenta; no puede
+  restablecer la propia desde esta pantalla.

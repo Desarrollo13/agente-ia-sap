@@ -9,6 +9,9 @@ from tools import (
     buscar_ordenes,
     buscar_ordenes_con_material_sin_stock,
     consultar_orden,
+    consultar_historial_equipo,
+    analizar_riesgo_equipo,
+    buscar_procedimientos,
     consultar_stock,
     consultar_usuario,
     ErrorConsultaBaseDatos,
@@ -22,6 +25,9 @@ TOOLS = [
     {"type": "function", "function": {"name": "consultar_orden", "description": "Consulta estado, prioridad y descripcion de una orden SAP.", "parameters": {"type": "object", "properties": {"numero_orden": {"type": "string"}}, "required": ["numero_orden"]}}},
     {"type": "function", "function": {"name": "consultar_usuario", "description": "Consulta datos de un usuario por legajo.", "parameters": {"type": "object", "properties": {"legajo": {"type": "string"}}, "required": ["legajo"]}}},
     {"type": "function", "function": {"name": "consultar_stock", "description": "Consulta la disponibilidad de un material especifico.", "parameters": {"type": "object", "properties": {"material": {"type": "string"}}, "required": ["material"]}}},
+    {"type": "function", "function": {"name": "consultar_historial_equipo", "description": "Consulta datos, ordenes y avisos de falla recientes de un equipo SAP PM.", "parameters": {"type": "object", "properties": {"equipo": {"type": "string"}}, "required": ["equipo"]}}},
+    {"type": "function", "function": {"name": "analizar_riesgo_equipo", "description": "Calcula un nivel de riesgo explicable para un equipo usando criticidad, avisos activos, prioridad de ordenes y fallas repetidas.", "parameters": {"type": "object", "properties": {"equipo": {"type": "string"}}, "required": ["equipo"]}}},
+    {"type": "function", "function": {"name": "buscar_procedimientos", "description": "Busca procedimientos tecnicos y pasos de seguridad en documentos locales de mantenimiento. Incluye siempre la fuente al responder.", "parameters": {"type": "object", "properties": {"consulta": {"type": "string"}}, "required": ["consulta"]}}},
     {"type": "function", "function": {"name": "buscar_ordenes", "description": "Lista ordenes SAP filtrando opcionalmente por estado y prioridad.", "parameters": {"type": "object", "properties": {"estado": {"type": "string"}, "prioridad": {"type": "string"}}}}},
     {"type": "function", "function": {"name": "analizar_ordenes", "description": "Resume cantidades y total de ordenes por estado y prioridad; no lista ordenes.", "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {"name": "buscar_materiales_sin_stock", "description": "Lista exclusivamente materiales con stock igual a cero, no ordenes.", "parameters": {"type": "object", "properties": {}}}},
@@ -32,7 +38,7 @@ TOOLS = [
 
 SISTEMA = """
 Sos un asistente especializado en mantenimiento SAP. Usa herramientas para consultar
-ordenes, usuarios, materiales, stock y relaciones entre ordenes y materiales.
+ordenes, usuarios, equipos, avisos de falla, materiales, stock y relaciones entre ordenes y materiales.
 
 Usa analizar_ordenes para totales o cantidades por estado/prioridad; buscar_ordenes
 para listar ordenes filtradas; buscar_materiales_sin_stock solo para materiales
@@ -42,6 +48,11 @@ material sin stock. No confundas estos dos ultimos casos.
 No inventes informacion. Los resultados de las herramientas son la fuente de verdad.
 Respeta codigos, cantidades, unidades y stock exactamente. Si una pregunta tiene
 varias necesidades, usa todas las herramientas necesarias y combina los resultados.
+Para historial, sintomas o fallas de un equipo usa consultar_historial_equipo. Describe
+antecedentes, pero no presentes hipotesis como una prediccion confirmada.
+Para priorizar la atencion de un equipo usa analizar_riesgo_equipo y explica que es
+un puntaje operativo basado en reglas, no una prediccion estadistica.
+Para recomendar procedimientos usa buscar_procedimientos y menciona la fuente devuelta.
 Responde en forma clara y breve sin mencionar nombres internos de herramientas.
 """
 
@@ -51,6 +62,9 @@ def ejecutar_herramienta(nombre, argumentos):
         "consultar_orden": {"numero_orden"},
         "consultar_usuario": {"legajo"},
         "consultar_stock": {"material"},
+        "consultar_historial_equipo": {"equipo"},
+        "analizar_riesgo_equipo": {"equipo"},
+        "buscar_procedimientos": {"consulta"},
         "buscar_ordenes": set(),
         "analizar_ordenes": set(),
         "buscar_materiales_sin_stock": set(),
@@ -71,6 +85,9 @@ def ejecutar_herramienta(nombre, argumentos):
         "consultar_orden": lambda: consultar_orden(argumentos["numero_orden"]),
         "consultar_usuario": lambda: consultar_usuario(argumentos["legajo"]),
         "consultar_stock": lambda: consultar_stock(argumentos["material"]),
+        "consultar_historial_equipo": lambda: consultar_historial_equipo(argumentos["equipo"]),
+        "analizar_riesgo_equipo": lambda: analizar_riesgo_equipo(argumentos["equipo"]),
+        "buscar_procedimientos": lambda: buscar_procedimientos(argumentos["consulta"]),
         "buscar_ordenes": lambda: buscar_ordenes(
             estado=argumentos.get("estado"), prioridad=argumentos.get("prioridad")
         ),
@@ -169,6 +186,45 @@ def redactar_lista_ordenes(ordenes):
     )
 
 
+def redactar_historial_equipo(resultado):
+    if isinstance(resultado, str):
+        return resultado
+    respuesta = (
+        f"El equipo {resultado['equipo']} ({resultado['descripcion']}) esta en "
+        f"{resultado['ubicacion_tecnica']} y tiene criticidad {resultado['criticidad']}."
+    )
+    if resultado["avisos"]:
+        avisos = "\n".join(
+            f"- Aviso {aviso['numero_aviso']} ({aviso['fecha_aviso']}): {aviso['sintoma']}. "
+            f"Modo de falla: {aviso['modo_falla'] or 'sin registrar'}."
+            for aviso in resultado["avisos"]
+        )
+        respuesta += "\n\nAvisos recientes:\n" + avisos
+    else:
+        respuesta += "\n\nNo hay avisos de falla registrados."
+    return respuesta
+
+
+def redactar_riesgo_equipo(resultado):
+    if isinstance(resultado, str):
+        return resultado
+    razones = "\n".join(f"- {razon}" for razon in resultado["razones"])
+    return (
+        f"El equipo {resultado['equipo']} tiene riesgo {resultado['nivel']} "
+        f"({resultado['puntaje']}/100).\n\nFactores considerados:\n{razones}\n\n"
+        "Es un puntaje operativo basado en reglas, no una prediccion estadistica."
+    )
+
+
+def redactar_procedimientos(documentos):
+    if not documentos:
+        return "No se encontraron procedimientos tecnicos relacionados."
+    return "\n\n".join(
+        f"{documento['titulo']}\n{documento['contenido']}\nFuente: {documento['fuente']}."
+        for documento in documentos
+    )
+
+
 def redactar_resultado_herramienta(nombre, resultado):
     if isinstance(resultado, str):
         return resultado
@@ -186,6 +242,12 @@ def redactar_resultado_herramienta(nombre, resultado):
         )
     if nombre == "consultar_stock":
         return redactar_consulta_stock(resultado)
+    if nombre == "consultar_historial_equipo":
+        return redactar_historial_equipo(resultado)
+    if nombre == "analizar_riesgo_equipo":
+        return redactar_riesgo_equipo(resultado)
+    if nombre == "buscar_procedimientos":
+        return redactar_procedimientos(resultado)
     if nombre == "buscar_ordenes":
         return redactar_lista_ordenes(resultado)
     if nombre == "buscar_materiales_sin_stock":

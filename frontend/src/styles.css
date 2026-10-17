@@ -2,6 +2,11 @@
 * { box-sizing: border-box; }
 body { margin: 0; }
 button, input { font: inherit; }
+button, input, select { font: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #e7ebeb; outline-offset: 3px; }
+.solo-lector { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.consulta-input { flex: 1; min-width: 0; }
+.consulta-input input { width: 100%; }
 .aplicacion { min-height: 100vh; display: grid; grid-template-columns: 310px minmax(0, 1fr); }
 .panel-lateral { padding: 38px 30px; background: #152121; border-right: 1px solid #31504d; }
 .marca { font-weight: bold; letter-spacing: .04em; }.marca span { display: inline-grid; place-items: center; width: 31px; height: 31px; margin-right: 8px; color: #102020; background: #b7e354; border-radius: 50%; }
@@ -24,5 +29,11 @@ button, input { font: inherit; }
  .formulario-cuenta input, .formulario-cuenta select, .fila-cuenta select { min-width: 0; padding: 10px; color: #e7ebeb; background: #1d2e2c; border: 1px solid #4b6a66; border-radius: 4px; }
  .formulario-cuenta button { padding: 0 14px; }
  .tabla-cuentas { margin-top: 16px; overflow-x: auto; }
- .fila-cuenta { display: grid; grid-template-columns: minmax(130px, 1fr) 170px 150px; align-items: center; gap: 12px; min-width: 500px; padding: 10px 0; border-top: 1px solid #31504d; color: #a9b8b5; font-size: .8rem; }
- .encabezado-cuenta { padding-top: 0; border-top: 0; color: #b7e354; font-size: .68rem; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; }
+ .fila-cuenta { display: grid; grid-template-columns: minmax(130px, 1fr) 170px 150px 170px; align-items: center; gap: 12px; min-width: 670px; padding: 10px 0; border-top: 1px solid #31504d; color: #a9b8b5; font-size: .8rem; }
+.encabezado-cuenta { padding-top: 0; border-top: 0; color: #b7e354; font-size: .68rem; font-weight: bold; letter-spacing: .08em; text-transform: uppercase; }
+.eliminar-conversacion { color: #ef9c9c; background: transparent; border: 1px solid #8c4d4d; border-radius: 4px; padding: 8px 10px; font-size: .75rem; cursor: pointer; }
+.restablecer-contrasena, .cancelar-restablecimiento { color: #b7e354; background: transparent; border: 1px solid #4b6a66; border-radius: 4px; padding: 8px 10px; cursor: pointer; }
+.formulario-restablecer { display: flex; align-items: end; gap: 8px; padding: 0 0 12px; }.formulario-restablecer label { flex: 1; display: grid; gap: 5px; color: #a9b8b5; font-size: .8rem; }.formulario-restablecer input { width: 100%; }
+.panel-alertas { margin-top: 18px; padding: 18px; border: 1px solid #755a32; background: #252116; }.formulario-alerta { margin-top: 18px; }.formulario-alerta label { flex: 1; display: grid; gap: 5px; color: #d1c7a5; font-size: .8rem; }.formulario-alerta input { width: 100%; }.tabla-alertas { display: grid; gap: 10px; margin-top: 16px; }.tabla-alertas > p { color: #d1c7a5; font-size: .85rem; }.alerta { display: flex; align-items: start; justify-content: space-between; gap: 16px; padding: 14px; border-left: 3px solid #e8b94f; background: #302a1a; }.alerta strong { color: #f2cf72; }.alerta p { margin: 6px 0; color: #d1c7a5; font-size: .85rem; }.alerta time { color: #a9b8b5; font-size: .75rem; }
+.panel-documentos { margin-top: 18px; padding: 18px; border: 1px solid #4b6a66; background: #152121; }.formulario-documento { display: grid; gap: 10px; margin-top: 18px; }.formulario-documento label { display: grid; gap: 5px; color: #a9b8b5; font-size: .8rem; }.formulario-documento textarea { min-height: 120px; padding: 12px; resize: vertical; color: #e7ebeb; background: #1d2e2c; border: 1px solid #4b6a66; border-radius: 5px; }.formulario-documento button { min-height: 42px; }.lista-documentos { display: grid; gap: 10px; margin-top: 16px; }.lista-documentos article { display: grid; gap: 6px; padding: 14px; border-left: 3px solid #62c6b0; background: #1d2e2c; }.lista-documentos span, .lista-documentos time { color: #a9b8b5; font-size: .8rem; }.lista-documentos p { margin: 0; white-space: pre-wrap; color: #d5dddd; font-size: .85rem; }
+@media (max-width: 720px) { .chat header { align-items: flex-start; gap: 16px; flex-direction: column; }.acciones-cabecera { width: 100%; flex-wrap: wrap; }.acciones-cabecera .nueva-conversacion { flex: 1 1 130px; }.formulario-cuenta { grid-template-columns: 1fr; }.formulario-cuenta label { display: grid; gap: 5px; color: #a9b8b5; font-size: .8rem; }.formulario-cuenta button { min-height: 42px; }.formulario-restablecer, .formulario-alerta, .alerta { align-items: stretch; flex-direction: column; }.panel-cuentas, .panel-auditoria, .panel-alertas, .panel-documentos { padding: 14px; } }

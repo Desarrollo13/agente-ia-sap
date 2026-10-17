@@ -130,4 +130,88 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Cuentas" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Auditoria" })).toBeInTheDocument();
   });
+
+  it("asocia etiquetas a los campos de creacion de cuentas", async () => {
+    iniciarSesion("administrador");
+    globalThis.fetch = vi.fn((url) => Promise.resolve(responderCarga(url)));
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cuentas" }));
+
+    expect(screen.getByLabelText("Usuario")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contrasena")).toBeInTheDocument();
+    expect(screen.getByLabelText("Rol")).toBeInTheDocument();
+  });
+
+  it("elimina la conversacion activa despues de confirmar", async () => {
+    iniciarSesion();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    globalThis.fetch = vi.fn((url, opciones = {}) => {
+      if (url.endsWith("/api/conversaciones")) return Promise.resolve(respuesta([{ id: 3, titulo: "Consulta", actualizado_en: "2026-10-16T10:00:00" }]));
+      if (url.endsWith("/api/conversaciones/3") && opciones.method === "DELETE") return Promise.resolve(respuesta({}, 204));
+      if (url.endsWith("/api/conversaciones/3")) return Promise.resolve(respuesta({ id: 3, mensajes: [] }));
+      return Promise.resolve(responderCarga(url));
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Consulta/ }));
+    expect(await screen.findByRole("button", { name: "Eliminar conversacion" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar conversacion" }));
+
+    expect(await screen.findByText("Inicia una conversacion con una consulta operativa.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Eliminar conversacion" })).not.toBeInTheDocument();
+  });
+
+  it("permite a un administrador restablecer la contrasena de otra cuenta", async () => {
+    iniciarSesion("administrador");
+    globalThis.fetch = vi.fn((url, opciones = {}) => {
+      if (url.endsWith("/api/cuentas") && !opciones.method) return Promise.resolve(respuesta([{ usuario: "tecnico", rol: "operador", creado_en: "2026-10-16T10:00:00" }]));
+      if (url.endsWith("/api/cuentas/tecnico/contrasena")) return Promise.resolve(respuesta({}, 204));
+      return Promise.resolve(responderCarga(url));
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Cuentas" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Restablecer contrasena" }));
+    fireEvent.change(screen.getByLabelText("Nueva contrasena para tecnico"), { target: { value: "contrasena-nueva" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar contrasena" }));
+
+    expect(await screen.findByRole("button", { name: "Restablecer contrasena" })).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringMatching(/tecnico\/contrasena$/), expect.objectContaining({ method: "PATCH" }));
+  });
+
+  it("muestra y permite atender alertas pendientes", async () => {
+    iniciarSesion();
+    globalThis.fetch = vi.fn((url, opciones = {}) => {
+      if (url.endsWith("/api/alertas") && !opciones.method) return Promise.resolve(respuesta([{ id: 4, equipo: "EQ-1001", descripcion_equipo: "Bomba", nivel: "Alto", puntaje: 80, detalle: "Aviso activo.", creada_por: "operador", creada_en: "2026-10-16T10:00:00" }]));
+      if (url.endsWith("/api/alertas/4")) return Promise.resolve(respuesta({}, 204));
+      return Promise.resolve(responderCarga(url));
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Alertas" }));
+    expect(await screen.findByText(/EQ-1001 · Riesgo Alto/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Marcar atendida" }));
+
+    expect(await screen.findByText("Sin alertas pendientes.")).toBeInTheDocument();
+  });
+
+  it("permite a un administrador incorporar un documento tecnico", async () => {
+    iniciarSesion("administrador");
+    globalThis.fetch = vi.fn((url, opciones = {}) => {
+      if (url.endsWith("/api/documentos-tecnicos") && !opciones.method) return Promise.resolve(respuesta([]));
+      if (url.endsWith("/api/documentos-tecnicos")) return Promise.resolve(respuesta({ id: 4, titulo: "Manual Bomba", fuente: "PM-BOM-01", contenido: "Verificar vibracion y sello mecanico.", creado_en: "2026-10-16T10:00:00" }, 201));
+      return Promise.resolve(responderCarga(url));
+    });
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Documentos" }));
+    fireEvent.change(screen.getByLabelText("Titulo"), { target: { value: "Manual Bomba" } });
+    fireEvent.change(screen.getByLabelText("Fuente"), { target: { value: "PM-BOM-01" } });
+    fireEvent.change(screen.getByLabelText("Contenido"), { target: { value: "Verificar vibracion y sello mecanico." } });
+    fireEvent.click(screen.getByRole("button", { name: "Incorporar documento" }));
+
+    expect(await screen.findByText("Manual Bomba")).toBeInTheDocument();
+    expect(globalThis.fetch).toHaveBeenCalledWith(expect.stringMatching(/documentos-tecnicos$/), expect.objectContaining({ method: "POST" }));
+  });
 });

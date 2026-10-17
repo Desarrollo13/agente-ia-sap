@@ -1,6 +1,8 @@
 from database import obtener_conexion
 from mysql.connector import Error as MySQLError, IntegrityError
 from seguridad import verificar_contrasena
+import re
+import unicodedata
 
 
 class ErrorConsultaBaseDatos(Exception):
@@ -215,6 +217,37 @@ def actualizar_rol_cuenta(usuario, rol, administrador):
             conexion.close()
 
 
+def restablecer_contrasena_cuenta(usuario, contrasena_cifrada, administrador):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "UPDATE cuentas SET contrasena_cifrada = %s WHERE usuario = %s",
+            (contrasena_cifrada, usuario),
+        )
+        if cursor.rowcount == 0:
+            conexion.rollback()
+            return False
+        cursor.execute("DELETE FROM sesiones WHERE usuario = %s", (usuario,))
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (administrador, "contrasena_restablecida", usuario),
+        )
+        conexion.commit()
+        return True
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
+
+
 def registrar_evento(usuario, evento, detalle=None):
     _ejecutar_modificacion(
         "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
@@ -236,6 +269,36 @@ def crear_conversacion(usuario):
     return _ejecutar_modificacion(
         "INSERT INTO conversaciones (usuario) VALUES (%s)", (usuario,), devolver_id=True
     )
+
+
+def eliminar_conversacion(conversacion_id, usuario):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "DELETE FROM conversaciones WHERE id = %s AND usuario = %s",
+            (conversacion_id, usuario),
+        )
+        if cursor.rowcount == 0:
+            conexion.rollback()
+            return False
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (usuario, "conversacion_eliminada", f"Conversacion {conversacion_id}"),
+        )
+        conexion.commit()
+        return True
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
 
 
 def guardar_interaccion_chat(conversacion_id, usuario, pregunta, respuesta):
@@ -370,6 +433,263 @@ def consultar_stock(material):
         una_fila=True,
     )
     return resultado or "No se encontro el material."
+
+
+def consultar_historial_equipo(equipo):
+    datos_equipo = _ejecutar_consulta(
+        """
+        SELECT equipo, descripcion, ubicacion_tecnica, criticidad
+        FROM equipos WHERE equipo = %s
+        """,
+        (equipo,),
+        una_fila=True,
+    )
+    if datos_equipo is None:
+        return "No se encontro el equipo."
+    avisos = _ejecutar_consulta(
+        """
+        SELECT numero_aviso, numero_orden, fecha_aviso, estado, sintoma, modo_falla, causa
+        FROM avisos_falla WHERE equipo = %s
+        ORDER BY fecha_aviso DESC LIMIT 10
+        """,
+        (equipo,),
+    )
+    ordenes = _ejecutar_consulta(
+        """
+        SELECT numero_orden, estado, prioridad, descripcion
+        FROM ordenes WHERE equipo = %s
+        ORDER BY numero_orden DESC LIMIT 10
+        """,
+        (equipo,),
+    )
+    return {**datos_equipo, "avisos": avisos, "ordenes": ordenes}
+
+
+def analizar_riesgo_equipo(equipo):
+    historial = consultar_historial_equipo(equipo)
+    if isinstance(historial, str):
+        return historial
+
+    puntaje = {"Alta": 30, "Media": 20, "Baja": 10}[historial["criticidad"]]
+    razones = [f"Criticidad {historial['criticidad']}: {puntaje} puntos."]
+    avisos_activos = [aviso for aviso in historial["avisos"] if aviso["estado"] != "Cerrado"]
+    if avisos_activos:
+        puntos_avisos = min(len(avisos_activos) * 20, 40)
+        puntaje += puntos_avisos
+        razones.append(f"{len(avisos_activos)} aviso(s) de falla activo(s): {puntos_avisos} puntos.")
+
+    prioridades = {orden["prioridad"] for orden in historial["ordenes"] if orden["estado"] != "Finalizada"}
+    if "Alta" in prioridades:
+        puntaje += 20
+        razones.append("Orden de prioridad Alta en curso: 20 puntos.")
+    elif "Media" in prioridades:
+        puntaje += 10
+        razones.append("Orden de prioridad Media en curso: 10 puntos.")
+
+    modos_falla = {}
+    for aviso in historial["avisos"]:
+        modo = aviso.get("modo_falla")
+        if modo:
+            modos_falla[modo] = modos_falla.get(modo, 0) + 1
+    repetidos = [modo for modo, cantidad in modos_falla.items() if cantidad >= 2]
+    if repetidos:
+        puntaje += 15
+        razones.append(f"Modo de falla repetido ({', '.join(repetidos)}): 15 puntos.")
+
+    puntaje = min(puntaje, 100)
+    nivel = "Alto" if puntaje >= 70 else "Medio" if puntaje >= 40 else "Bajo"
+    return {
+        "equipo": historial["equipo"],
+        "puntaje": puntaje,
+        "nivel": nivel,
+        "razones": razones,
+    }
+
+
+def crear_alerta_riesgo_alto(equipo, usuario):
+    riesgo = analizar_riesgo_equipo(equipo)
+    if isinstance(riesgo, str):
+        return riesgo
+    if riesgo["nivel"] != "Alto":
+        return {"creada": False, "motivo": "El equipo no tiene riesgo alto.", "riesgo": riesgo}
+
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT equipo FROM equipos WHERE equipo = %s FOR UPDATE", (equipo,))
+        if cursor.fetchone() is None:
+            conexion.rollback()
+            return "No se encontro el equipo."
+        cursor.execute(
+            "SELECT id FROM alertas_mantenimiento WHERE equipo = %s AND estado = 'Pendiente'",
+            (equipo,),
+        )
+        alerta_existente = cursor.fetchone()
+        if alerta_existente:
+            conexion.rollback()
+            return {
+                "creada": False,
+                "motivo": "Ya existe una alerta pendiente para este equipo.",
+                "alerta_id": alerta_existente["id"],
+                "riesgo": riesgo,
+            }
+        detalle = " ".join(riesgo["razones"])
+        cursor.execute(
+            """
+            INSERT INTO alertas_mantenimiento (equipo, nivel, puntaje, detalle, creada_por)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
+            (equipo, riesgo["nivel"], riesgo["puntaje"], detalle, usuario),
+        )
+        alerta_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (usuario, "alerta_riesgo_creada", f"Alerta {alerta_id} para {equipo}"),
+        )
+        conexion.commit()
+        return {"creada": True, "alerta_id": alerta_id, "riesgo": riesgo}
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
+
+
+def listar_alertas(estado="Pendiente"):
+    return _ejecutar_consulta(
+        """
+        SELECT a.id, a.equipo, e.descripcion AS descripcion_equipo, a.nivel, a.puntaje,
+            a.detalle, a.estado, a.creada_por, a.creada_en, a.atendida_por, a.atendida_en
+        FROM alertas_mantenimiento a
+        INNER JOIN equipos e ON e.equipo = a.equipo
+        WHERE a.estado = %s
+        ORDER BY a.creada_en DESC
+        """,
+        (estado,),
+    )
+
+
+def atender_alerta(alerta_id, usuario):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute("SELECT equipo FROM alertas_mantenimiento WHERE id = %s FOR UPDATE", (alerta_id,))
+        alerta = cursor.fetchone()
+        if alerta is None:
+            conexion.rollback()
+            return False
+        cursor.execute(
+            """
+            UPDATE alertas_mantenimiento
+            SET estado = 'Atendida', atendida_por = %s, atendida_en = UTC_TIMESTAMP()
+            WHERE id = %s AND estado = 'Pendiente'
+            """,
+            (usuario, alerta_id),
+        )
+        if cursor.rowcount == 0:
+            conexion.rollback()
+            return None
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (usuario, "alerta_riesgo_atendida", f"Alerta {alerta_id} para {alerta['equipo']}"),
+        )
+        conexion.commit()
+        return True
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
+
+
+def buscar_procedimientos(consulta, limite=3):
+    texto_normalizado = unicodedata.normalize("NFKD", consulta.lower())
+    texto_normalizado = "".join(caracter for caracter in texto_normalizado if not unicodedata.combining(caracter))
+    palabras = {
+        palabra for palabra in re.findall(r"[a-z0-9]+", texto_normalizado)
+        if len(palabra) >= 3 and palabra not in {"para", "como", "con", "del", "las", "los", "una", "que", "equipo"}
+    }
+    if not palabras:
+        return []
+    consulta_busqueda = " ".join(f"{palabra}*" for palabra in sorted(palabras))
+    documentos = _ejecutar_consulta(
+        """
+        SELECT id, titulo, fuente, contenido
+        FROM documentos_tecnicos
+        WHERE MATCH(titulo, contenido) AGAINST (%s IN BOOLEAN MODE)
+        ORDER BY MATCH(titulo, contenido) AGAINST (%s IN BOOLEAN MODE) DESC, titulo
+        LIMIT %s
+        """,
+        (consulta_busqueda, consulta_busqueda, limite),
+    )
+    resultados = []
+    for documento in documentos:
+        contenido_normalizado = unicodedata.normalize(
+            "NFKD", f"{documento['titulo']} {documento['contenido']}".lower()
+        )
+        contenido_normalizado = "".join(
+            caracter for caracter in contenido_normalizado if not unicodedata.combining(caracter)
+        )
+        coincidencias = sum(palabra in contenido_normalizado for palabra in palabras)
+        if coincidencias:
+            resultados.append({
+                "id": documento["id"],
+                "titulo": documento["titulo"],
+                "fuente": documento["fuente"],
+                "contenido": documento["contenido"],
+                "relevancia": coincidencias,
+            })
+    return sorted(resultados, key=lambda documento: (-documento["relevancia"], documento["titulo"]))
+
+
+def listar_documentos_tecnicos():
+    return _ejecutar_consulta(
+        "SELECT id, titulo, fuente, contenido, creado_en FROM documentos_tecnicos ORDER BY id DESC"
+    )
+
+
+def crear_documento_tecnico(titulo, fuente, contenido, administrador):
+    conexion = None
+    cursor = None
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "INSERT INTO documentos_tecnicos (titulo, fuente, contenido) VALUES (%s, %s, %s)",
+            (titulo, fuente, contenido),
+        )
+        documento_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO auditoria (usuario, evento, detalle) VALUES (%s, %s, %s)",
+            (administrador, "documento_tecnico_creado", f"Documento {documento_id}: {titulo}"),
+        )
+        conexion.commit()
+        return documento_id
+    except IntegrityError:
+        if conexion is not None:
+            conexion.rollback()
+        return None
+    except MySQLError as error:
+        if conexion is not None:
+            conexion.rollback()
+        raise ErrorConsultaBaseDatos from error
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conexion is not None:
+            conexion.close()
 
 
 def buscar_ordenes(estado=None, prioridad=None):

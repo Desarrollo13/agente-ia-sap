@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.middleware.cors import CORSMiddleware
 from ollama import list as listar_modelos
@@ -12,8 +12,17 @@ from tools import (
     analizar_ordenes,
     analizar_prioridad_ordenes_esperando_material,
     buscar_materiales_sin_stock,
+    consultar_historial_equipo,
+    analizar_riesgo_equipo,
+    crear_alerta_riesgo_alto,
+    listar_alertas,
+    atender_alerta,
+    buscar_procedimientos,
+    listar_documentos_tecnicos,
+    crear_documento_tecnico,
     autenticar_cuenta,
     crear_conversacion,
+    eliminar_conversacion,
     crear_sesion,
     eliminar_sesion,
     guardar_interaccion_chat,
@@ -25,6 +34,7 @@ from tools import (
     listar_cuentas,
     crear_cuenta_administrada,
     actualizar_rol_cuenta,
+    restablecer_contrasena_cuenta,
     registrar_evento,
     listar_auditoria,
     contar_intentos_login,
@@ -39,7 +49,7 @@ MAXIMO_RESPUESTA_CHAT_BYTES = 60000
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_methods=["GET", "POST", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE"],
     allow_headers=["Content-Type", "Authorization"],
 )
 esquema_bearer = HTTPBearer(auto_error=False)
@@ -89,6 +99,58 @@ class HistorialConversacion(BaseModel):
     mensajes: list[MensajeConversacion]
 
 
+class HistorialEquipo(BaseModel):
+    equipo: str
+    descripcion: str
+    ubicacion_tecnica: str
+    criticidad: Literal["Alta", "Media", "Baja"]
+    avisos: list[dict]
+    ordenes: list[dict]
+
+
+class RiesgoEquipo(BaseModel):
+    equipo: str
+    puntaje: int
+    nivel: Literal["Alto", "Medio", "Bajo"]
+    razones: list[str]
+
+
+class AlertaMantenimiento(BaseModel):
+    id: int
+    equipo: str
+    descripcion_equipo: str
+    nivel: Literal["Alto"]
+    puntaje: int
+    detalle: str
+    estado: Literal["Pendiente", "Atendida"]
+    creada_por: str
+    creada_en: datetime
+    atendida_por: str | None
+    atendida_en: datetime | None
+
+
+class DocumentoTecnico(BaseModel):
+    id: int
+    titulo: str
+    fuente: str
+    contenido: str
+    relevancia: int
+
+
+class DocumentoTecnicoAdministrado(BaseModel):
+    id: int
+    titulo: str
+    fuente: str
+    contenido: str
+    creado_en: datetime
+
+
+class NuevoDocumentoTecnico(BaseModel):
+    titulo: str = Field(min_length=3, max_length=255)
+    fuente: str = Field(min_length=3, max_length=255)
+    contenido: str = Field(min_length=20, max_length=10000)
+
+
 class EventoAuditoria(BaseModel):
     usuario: str
     evento: str
@@ -110,6 +172,10 @@ class NuevaCuenta(BaseModel):
 
 class CambioRol(BaseModel):
     rol: Literal["operador", "administrador"]
+
+
+class NuevaContrasena(BaseModel):
+    contrasena: str = Field(min_length=1, max_length=200)
 
 
 def obtener_usuario_actual(
@@ -203,6 +269,104 @@ def consultar_conversacion(conversacion_id: int, usuario: str = Depends(obtener_
     return {"id": conversacion_id, "mensajes": mensajes}
 
 
+@app.delete("/api/conversaciones/{conversacion_id}", status_code=status.HTTP_204_NO_CONTENT)
+def borrar_conversacion(conversacion_id: int, usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        eliminada = eliminar_conversacion(conversacion_id, usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo eliminar la conversacion.") from error
+    if not eliminada:
+        raise HTTPException(status_code=404, detail="Conversacion no encontrada.")
+
+
+@app.get("/api/equipos/{equipo}/historial", response_model=HistorialEquipo)
+def consultar_historial_tecnico_equipo(equipo: str, _usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        historial = consultar_historial_equipo(equipo)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo consultar el historial del equipo.") from error
+    if isinstance(historial, str):
+        raise HTTPException(status_code=404, detail=historial)
+    return historial
+
+
+@app.get("/api/equipos/{equipo}/riesgo", response_model=RiesgoEquipo)
+def consultar_riesgo_equipo(equipo: str, _usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        riesgo = analizar_riesgo_equipo(equipo)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo analizar el riesgo del equipo.") from error
+    if isinstance(riesgo, str):
+        raise HTTPException(status_code=404, detail=riesgo)
+    return riesgo
+
+
+@app.post("/api/equipos/{equipo}/alertas")
+def crear_alerta_equipo(equipo: str, usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        resultado = crear_alerta_riesgo_alto(equipo, usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo crear la alerta.") from error
+    if isinstance(resultado, str):
+        raise HTTPException(status_code=404, detail=resultado)
+    return resultado
+
+
+@app.get("/api/alertas", response_model=list[AlertaMantenimiento])
+def consultar_alertas(_usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        return listar_alertas()
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudieron consultar las alertas.") from error
+
+
+@app.patch("/api/alertas/{alerta_id}", status_code=status.HTTP_204_NO_CONTENT)
+def marcar_alerta_atendida(alerta_id: int, usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        atendida = atender_alerta(alerta_id, usuario)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo actualizar la alerta.") from error
+    if atendida is False:
+        raise HTTPException(status_code=404, detail="Alerta no encontrada.")
+    if atendida is None:
+        raise HTTPException(status_code=409, detail="La alerta ya fue atendida.")
+
+
+@app.get("/api/conocimiento/buscar", response_model=list[DocumentoTecnico])
+def buscar_conocimiento(q: str = Query(min_length=3, max_length=200), _usuario: str = Depends(obtener_usuario_actual)):
+    try:
+        return buscar_procedimientos(q)
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo consultar el conocimiento tecnico.") from error
+
+
+@app.get("/api/documentos-tecnicos", response_model=list[DocumentoTecnicoAdministrado])
+def consultar_documentos_tecnicos(_usuario: str = Depends(requiere_administrador)):
+    try:
+        return listar_documentos_tecnicos()
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudieron consultar los documentos tecnicos.") from error
+
+
+@app.post("/api/documentos-tecnicos", response_model=DocumentoTecnicoAdministrado, status_code=status.HTTP_201_CREATED)
+def crear_documento_tecnico_api(documento: NuevoDocumentoTecnico, administrador: str = Depends(requiere_administrador)):
+    try:
+        documento_id = crear_documento_tecnico(
+            documento.titulo, documento.fuente, documento.contenido, administrador
+        )
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo crear el documento tecnico.") from error
+    if documento_id is None:
+        raise HTTPException(status_code=409, detail="Ya existe un documento con ese titulo y fuente.")
+    return {
+        "id": documento_id,
+        "titulo": documento.titulo,
+        "fuente": documento.fuente,
+        "contenido": documento.contenido,
+        "creado_en": datetime.now(),
+    }
+
+
 @app.get("/api/auditoria", response_model=list[EventoAuditoria])
 def consultar_auditoria(_usuario: str = Depends(requiere_administrador)):
     try:
@@ -254,6 +418,26 @@ def cambiar_rol_cuenta(usuario: str, cambio: CambioRol, administrador: str = Dep
     if not actualizada:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada.")
     return {"usuario": usuario, "rol": cambio.rol, "creado_en": datetime.now()}
+
+
+@app.patch("/api/cuentas/{usuario}/contrasena", status_code=status.HTTP_204_NO_CONTENT)
+def restablecer_contrasena(usuario: str, datos: NuevaContrasena, administrador: str = Depends(requiere_administrador)):
+    error_usuario = validar_usuario(usuario)
+    if error_usuario:
+        raise HTTPException(status_code=422, detail=error_usuario)
+    if usuario == administrador:
+        raise HTTPException(status_code=400, detail="No puedes restablecer tu propia contrasena desde esta pantalla.")
+    error_contrasena = validar_contrasena(datos.contrasena)
+    if error_contrasena:
+        raise HTTPException(status_code=422, detail=error_contrasena)
+    try:
+        restablecida = restablecer_contrasena_cuenta(
+            usuario, cifrar_contrasena(datos.contrasena), administrador
+        )
+    except ErrorConsultaBaseDatos as error:
+        raise HTTPException(status_code=503, detail="No se pudo restablecer la contrasena.") from error
+    if not restablecida:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada.")
 
 
 @app.post("/api/chat", response_model=RespuestaChat)
